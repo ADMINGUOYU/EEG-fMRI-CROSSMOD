@@ -1,0 +1,58 @@
+# Data directories and files
+data/
+# - symbolic link version
+/data
+*.df
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.mat
+
+# Training outputs
+results/
+# - symbolic link version
+/results
+
+# Model files
+*.pth
+*.ckpt
+*.pt
+*.safetensors
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+Archives/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store

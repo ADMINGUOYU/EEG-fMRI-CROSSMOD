@@ -1,0 +1,60 @@
+# Requirement file for conda environment
+# NOTE: please downgrade setuptools to 81.0.0 to launch tensorboard
+#       pip install setuptools==81.0.0
+# NOTE: CineBrain's requirements based on CogVideo-1.0:
+#       https://github.com/zai-org/CogVideo/releases/tag/v1.0
+# NOTE: fMRI-SRES == fMRI-S(uper)RES(olution)
+name: fMRI-SRES
+channels:
+    - conda-forge
+    - nvidia
+    - pytorch
+    - defaults
+dependencies:
+    # Python (CogVideo: 3.10 <= x <= 3.12)
+    - python=3.12.*
+
+    # Core libraries
+    - numpy>=2.0.0
+    - pandas>=2.2.2
+    - scipy>=1.15.0
+    - scikit-learn>=1.6.0
+    - matplotlib>=3.10.0
+    - tqdm
+
+    - pip
+    - pip:
+        # Install pytorch
+        - torch>=2.6.0
+        - torchvision>=0.17.0
+        - torchaudio>=2.6.0
+        - torchmetrics>=0.11.0
+        - --extra-index-url https://download.pytorch.org/whl/cu126
+
+        # ML
+        - transformers==5.1.0
+        - reformer-pytorch
+
+        # Image processing
+        - open-clip-torch
+        - opencv-python-headless
+        - scikit-image
+
+        # EEG processing
+        - h5py
+        - mne
+        - pyEDFlib
+
+        # Other dependencies
+        - einops
+        - torchinfo
+        - umap-learn
+        - tensorboard
+
+        # Web app provider (Flask)
+        - flask
+
+# Create
+# conda env create -f environment.yml
+# Remove
+# conda env remove -n <ENV name>
