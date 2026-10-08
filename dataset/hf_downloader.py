@@ -20,10 +20,6 @@ from requests.exceptions import RequestException
 
 class HF_REPO:
 
-    # By default, ignores git metadata and hidden files automatically
-    # (constant static variable)
-    DEFAULT_IGNORE_PATTERNS = [".*", ".git*", "README.md"]
-
     def __init__(
         self,
         repo_id: str,
@@ -70,7 +66,7 @@ class HF_REPO:
         os.makedirs(target_path, exist_ok = True)
 
         # Determine effective ignore and keep patterns
-        effective_ignore_patterns = list(ignore_patterns) if ignore_patterns is not None else HF_REPO.DEFAULT_IGNORE_PATTERNS
+        effective_ignore_patterns = list(ignore_patterns) if ignore_patterns is not None else None
         effective_keep_patterns = list(keep_patterns) if keep_patterns is not None else None
 
         print(f"\033[1;34m[HF_REPO] INFO\033[0m: Starting download for {self.repo_id} ({self.repo_type}) to {target_path}")
