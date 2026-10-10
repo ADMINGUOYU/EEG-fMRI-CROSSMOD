@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 import os
+import sys
 import time
 from typing import List, Optional, Sequence
 
@@ -84,7 +85,9 @@ class HF_REPO:
                     endpoint = self.hf_endpoint,
                     cache_dir = self.hf_home,
                 )
-                print("\033[1;32m[HF_REPO] OK\033[0m: Download completed successfully!")
+                # force flush stdout to ensure all messages are printed before exit
+                sys.stdout.flush()
+                print("\n\n\033[1;32m[HF_REPO] OK\033[0m: Download completed successfully!")
                 return
             except (RequestException, Exception) as e:
                 delay = base_delay * (2 ** attempt)
