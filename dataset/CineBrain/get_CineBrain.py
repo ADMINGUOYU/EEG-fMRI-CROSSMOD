@@ -33,7 +33,7 @@ if __name__ == "__main__":
 
     # Do file list processing if needed
     finalised_files = files
-    print(f"\033[1;34m[HF_REPO] INFO\033[0m: Files to download ({REPO_ID}):")
+    print(f"\033[1;34m[INFO]\033[0m: Files to download ({REPO_ID}):")
     for f in finalised_files:
         print(f"  - {f}")
 
@@ -52,7 +52,7 @@ if __name__ == "__main__":
     # check if all files are downloaded
     missing_files = set(finalised_files) - set(downloaded_files)
     if missing_files:
-        print(f"\033[1;31m[HF_REPO] ERROR\033[0m: Missing files in {TARGET_PATH}:")
+        print(f"\033[1;31m[ERROR]\033[0m: Missing files in {TARGET_PATH}:")
         for f in missing_files:
             print(f"  - {f}")
 # [ERROR TERMINATION]
@@ -68,24 +68,24 @@ if __name__ == "__main__":
         decompress_path_absolute = os.path.dirname(filepath_absolute)
 
         if file.endswith(".tar"):
-            print(f"\033[1;34m[HF_REPO] INFO\033[0m: Extracting {filepath_absolute}.")
+            print(f"\033[1;34m[INFO]\033[0m: Extracting {filepath_absolute}.")
             try:
                 subprocess.run(["tar", "-xf", filepath_absolute, "-C", decompress_path_absolute], check = True)
             except subprocess.CalledProcessError as e:
-                print(f"\033[1;31m[HF_REPO] ERROR\033[0m: Failed to extract {filepath_absolute}. Error: {e}")
+                print(f"\033[1;31m[ERROR]\033[0m: Failed to extract {filepath_absolute}. Error: {e}")
 # [ERROR TERMINATION]
                 exit(1)
-            print(f"\033[1;32m[HF_REPO] OK\033[0m: Extracted {filepath_absolute}.")
+            print(f"\033[1;32m[OK]\033[0m: Extracted {filepath_absolute}.")
             tar_count += 1
         if file.endswith(".zip"):
-            print(f"\033[1;34m[HF_REPO] INFO\033[0m: Extracting {filepath_absolute}.")
+            print(f"\033[1;34m[INFO]\033[0m: Extracting {filepath_absolute}.")
             try:
                 subprocess.run(["unzip", "-o", filepath_absolute, "-d", decompress_path_absolute], check = True)
             except subprocess.CalledProcessError as e:
-                print(f"\033[1;31m[HF_REPO] ERROR\033[0m: Failed to extract {filepath_absolute}. Error: {e}")
+                print(f"\033[1;31m[ERROR]\033[0m: Failed to extract {filepath_absolute}. Error: {e}")
 # [ERROR TERMINATION]
                 exit(1)
-            print(f"\033[1;32m[HF_REPO] OK\033[0m: Extracted {filepath_absolute}.")
+            print(f"\033[1;32m[OK]\033[0m: Extracted {filepath_absolute}.")
             zip_count += 1
 
     # remove some bad bad files from macOS
@@ -93,27 +93,27 @@ if __name__ == "__main__":
     for bad_file in bad_files:
         bad_file_path = os.path.join(TARGET_PATH, bad_file)
         if os.path.exists(bad_file_path):
-            print(f"\033[1;34m[HF_REPO] INFO\033[0m: Removing {bad_file_path}.")
+            print(f"\033[1;34m[INFO]\033[0m: Removing {bad_file_path}.")
             try:
                 if os.path.isdir(bad_file_path):
                     subprocess.run(["rm", "-rf", bad_file_path], check = True)
                 else:
                     os.remove(bad_file_path)
             except Exception as e:
-                print(f"\033[1;31m[HF_REPO] ERROR\033[0m: Failed to remove {bad_file_path}. Error: {e}")
+                print(f"\033[1;31m[ERROR]\033[0m: Failed to remove {bad_file_path}. Error: {e}")
     # remove compressed files if needed
     if DELETE_COMPRESSED_FILES_WHEN_DONE:
         for file in finalised_files:
             if file.endswith(".tar") or file.endswith(".zip"):
                 compressed_file_path = os.path.join(TARGET_PATH, file)
                 if os.path.exists(compressed_file_path):
-                    print(f"\033[1;34m[HF_REPO] INFO\033[0m: Removing {compressed_file_path}.")
+                    print(f"\033[1;34m[INFO]\033[0m: Removing {compressed_file_path}.")
                     try:
                         os.remove(compressed_file_path)
                     except Exception as e:
-                        print(f"\033[1;31m[HF_REPO] ERROR\033[0m: Failed to remove {compressed_file_path}. Error: {e}")
+                        print(f"\033[1;31m[ERROR]\033[0m: Failed to remove {compressed_file_path}. Error: {e}")
 
     # print a summary of the downloaded files
-    print(f"\n\033[1;32m[HF_REPO] OK\033[0m: Downloaded {len(downloaded_files)} files to {TARGET_PATH}.")
-    print(f"\033[1;32m[HF_REPO] OK\033[0m: Extracted {tar_count} tar files.")
-    print(f"\033[1;32m[HF_REPO] OK\033[0m: Extracted {zip_count} zip files.")
+    print(f"\n\033[1;32m[OK]\033[0m: Downloaded {len(downloaded_files)} files to {TARGET_PATH}.")
+    print(f"\033[1;32m[OK]\033[0m: Extracted {tar_count} tar files.")
+    print(f"\033[1;32m[OK]\033[0m: Extracted {zip_count} zip files.")
