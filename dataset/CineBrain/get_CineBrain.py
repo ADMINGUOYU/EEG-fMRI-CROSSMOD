@@ -63,27 +63,29 @@ if __name__ == "__main__":
     # for those .zip files, try to unzip
     zip_count = 0
     for file in downloaded_files:
+        # get file path and path to file where we are decompressing
+        filepath_absolute = os.path.join(TARGET_PATH, file)
+        decompress_path_absolute = os.path.dirname(filepath_absolute)
+
         if file.endswith(".tar"):
-            tar_path = os.path.join(TARGET_PATH, file)
-            print(f"\033[1;34m[HF_REPO] INFO\033[0m: Extracting {tar_path}.")
+            print(f"\033[1;34m[HF_REPO] INFO\033[0m: Extracting {filepath_absolute}.")
             try:
-                subprocess.run(["tar", "-xf", tar_path, "-C", TARGET_PATH], check = True)
+                subprocess.run(["tar", "-xf", filepath_absolute, "-C", decompress_path_absolute], check = True)
             except subprocess.CalledProcessError as e:
-                print(f"\033[1;31m[HF_REPO] ERROR\033[0m: Failed to extract {tar_path}. Error: {e}")
+                print(f"\033[1;31m[HF_REPO] ERROR\033[0m: Failed to extract {filepath_absolute}. Error: {e}")
 # [ERROR TERMINATION]
                 exit(1)
-            print(f"\033[1;32m[HF_REPO] OK\033[0m: Extracted {tar_path}.")
+            print(f"\033[1;32m[HF_REPO] OK\033[0m: Extracted {filepath_absolute}.")
             tar_count += 1
         if file.endswith(".zip"):
-            zip_path = os.path.join(TARGET_PATH, file)
-            print(f"\033[1;34m[HF_REPO] INFO\033[0m: Extracting {zip_path}.")
+            print(f"\033[1;34m[HF_REPO] INFO\033[0m: Extracting {filepath_absolute}.")
             try:
-                subprocess.run(["unzip", "-o", zip_path, "-d", TARGET_PATH], check = True)
+                subprocess.run(["unzip", "-o", filepath_absolute, "-d", decompress_path_absolute], check = True)
             except subprocess.CalledProcessError as e:
-                print(f"\033[1;31m[HF_REPO] ERROR\033[0m: Failed to extract {zip_path}. Error: {e}")
+                print(f"\033[1;31m[HF_REPO] ERROR\033[0m: Failed to extract {filepath_absolute}. Error: {e}")
 # [ERROR TERMINATION]
                 exit(1)
-            print(f"\033[1;32m[HF_REPO] OK\033[0m: Extracted {zip_path}.")
+            print(f"\033[1;32m[HF_REPO] OK\033[0m: Extracted {filepath_absolute}.")
             zip_count += 1
 
     # remove some bad bad files from macOS
