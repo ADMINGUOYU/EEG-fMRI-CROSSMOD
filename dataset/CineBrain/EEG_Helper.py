@@ -8,6 +8,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import butter, iirnotch, filtfilt, welch
+import mne
 
 # EEG info
 EEG_seq_len = 800  # each clip is 0.8s long, sampled at 1,000 Hz
@@ -18,22 +19,54 @@ LOW_CUT_HZ = 0.1
 HIGH_CUT_HZ = 30.0
 DOWNSAMPLE_RATE_HZ = 200 # A standard rate for processed EEG
 FILTER_ORDER = 4
+# random SEED
+RNG_SEED = 42
 
 # Preprocessing function for EEG data
 def preprocess_eeg(
         eeg_data: np.ndarray,
+        ecg_data: np.ndarray = None,
         original_fs: int = EEG_sampling_rate,
         new_fs: int = DOWNSAMPLE_RATE_HZ,
         low_cut: float = LOW_CUT_HZ,
         high_cut: float = HIGH_CUT_HZ
     ) -> np.ndarray:
+
+    # check input dimensions
+    if eeg_data.ndim != 2:
+        raise ValueError(f"\033[1;31m[ERROR]\033[0m EEG data must be a 2D array (channels, samples). Got shape: {eeg_data.shape}")
+    # log input dimensions
+    eeg_channel_count = eeg_data.shape[0]
+
+    # if ECG provided, concat to ECG to EEG and record each modality's channel count
+    if ecg_data is not None:
+        if ecg_data.ndim == 1:
+            ecg_data = ecg_data[np.newaxis, :]  # Convert to 2D array with shape (1, n_samples)
+        elif ecg_data.ndim != 2:
+            raise ValueError(f"\033[1;31m[ERROR]\033[0m ECG data must be a 1D or 2D array. Got shape: {ecg_data.shape}")
+
+        if ecg_data.shape[1] != eeg_data.shape[1]:
+            raise ValueError(
+                f"\033[1;31m[ERROR]\033[0m ECG and EEG must have the same sample count. EEG: {eeg_data.shape[1]}, ECG: {ecg_data.shape[1]}"
+            )
+
+        # Concatenate ECG and EEG data along the channel axis
+        ecg_for_ica = ecg_data[:1, :]
+        if ecg_data.shape[0] > 1:
+            print(f"\033[1;33m[WARN]\033[0m Received {ecg_data.shape[0]} ECG channels. Using the first channel for ICA guidance.")
+        combined_data = np.concatenate((eeg_data, ecg_for_ica), axis = 0)
+        ecg_channel_count = ecg_data.shape[0]
+    else:
+        combined_data = eeg_data
+        ecg_channel_count = 0
+        ecg_for_ica = None
     
     # 1. Band-pass filtering
     nyquist_freq = 0.5 * original_fs
     low = low_cut / nyquist_freq
     high = high_cut / nyquist_freq
     b_band, a_band = butter(FILTER_ORDER, [low, high], btype = 'band')
-    filtered_data = filtfilt(b_band, a_band, eeg_data, axis = -1)
+    filtered_data = filtfilt(b_band, a_band, combined_data, axis = -1)
 
     # 2. Notch filtering to remove electrical line noise
     # A quality factor of 30 is standard for a narrow notch
@@ -44,12 +77,99 @@ def preprocess_eeg(
     # 3. Downsampling
     # ship if the new sampling rate is higher or equal to the original
     if new_fs >= original_fs:
-        print(f"\033[1;31m[WARN]\033[0m New sampling rate ({new_fs} Hz) is not lower than original ({original_fs} Hz). Skipping downsampling.")
-        return notched_data
+        print(f"\033[1;33m[WARN]\033[0m New sampling rate ({new_fs} Hz) is not lower than original ({original_fs} Hz). Skipping downsampling.")
+        preprocessed_data = notched_data
+        current_fs = original_fs
     else:
         downsample_factor = int(original_fs / new_fs)
-        downsampled_data = notched_data[:, ::downsample_factor]
-        return downsampled_data
+        preprocessed_data = notched_data[:, ::downsample_factor]
+        current_fs = new_fs
+
+    # 4. ECG-Informed ICA Artifact Removal
+    if ecg_data is not None:
+        # Calculate the total duration in seconds of the provided signal
+        # we terminate the ICA if the signal is too short (so don't provide a single 0.8s clip if you're using CineBrain)
+        total_duration_sec = preprocessed_data.shape[1] / current_fs
+        THRESHOLD_ICA_SEC = 30  # seconds
+        if total_duration_sec < THRESHOLD_ICA_SEC:
+            print(f"\033[1;33m[WARN]\033[0m Total duration of EEG data ({total_duration_sec:.2f}s) is less than the threshold ({THRESHOLD_ICA_SEC}s)")
+            # ask user if to continue or not
+            user_input = input("\033[1;33m[WARN]\033[0m Do you want to continue with ICA artifact removal? (y/n): ")
+            if user_input.lower() != 'y':
+                print(f"\033[1;34m[INFO]\033[0m Skipping ICA artifact removal due to short duration.")
+                # detach ECG data from EEG data and return only the EEG channels
+                return preprocessed_data[:eeg_channel_count, :]
+
+        # we start ICA artifact removal
+        eeg_channels = preprocessed_data[:eeg_channel_count, :]
+        ecg_channel = preprocessed_data[eeg_channel_count:eeg_channel_count + ecg_channel_count, :]
+
+        ecg_channel_names = [f"ECG{idx + 1}" for idx in range(ecg_channel_count)]
+        ch_names = [f"EEG{idx + 1}" for idx in range(eeg_channel_count)] + ecg_channel_names
+        ch_types = ["eeg"] * eeg_channel_count + ["ecg"] * ecg_channel_count
+
+        # Create MNE info block
+        info = mne.create_info(ch_names = ch_names, sfreq = current_fs, ch_types = ch_types)
+
+        # Stack channels to feed into MNE RawArray
+        combined_matrix = np.vstack((eeg_channels, ecg_channel))
+        raw = mne.io.RawArray(data = combined_matrix, info = info, verbose = False)
+
+        if eeg_channel_count < 2:
+            print("\033[1;33m[WARN]\033[0m ICA requires at least 2 EEG channels. Returning filtered EEG without ICA.")
+            return eeg_channels
+
+        # Fit ICA on the EEG channels only
+        ica = mne.preprocessing.ICA(
+            n_components = 0.95,
+            method = "fastica",
+            rng = RNG_SEED,
+            max_iter = "auto"
+        )
+
+        try:
+            try:
+                ica.fit(inst = raw, picks = "eeg", verbose = False)
+            except Exception:
+                fallback_components = max(2, eeg_channel_count - 1)
+                ica = mne.preprocessing.ICA(
+                    n_components = fallback_components,
+                    method = "fastica",
+                    rng = RNG_SEED,
+                    max_iter = "auto"
+                )
+                ica.fit(inst = raw, picks = "eeg", verbose = False)
+
+            bad_component_indices = set()
+            for ecg_name in ecg_channel_names:
+                # Find and mark cardiac components using the cross-correlation of each ECG channel
+                ecg_indices, _ = ica.find_bads_ecg(
+                    inst = raw,
+                    ch_name = ecg_name,
+                    method = "correlation",
+                    threshold = 0.35,
+                    verbose = False
+                )
+                bad_component_indices.update(int(idx) for idx in ecg_indices)
+
+            if len(bad_component_indices) > 0:
+                bad_component_indices = sorted(bad_component_indices)
+                print(f"\033[1;32m[OK]\033[0m Identified and removed {len(bad_component_indices)} unique cardiac component(s): {bad_component_indices}")
+                ica.exclude = bad_component_indices
+            else:
+                print(f"\033[1;33m[INFO]\033[0m No components exceeded the ECG correlation threshold. Keeping all components.")
+
+            # Reconstruct clean EEG channels
+            cleaned_raw = ica.apply(inst = raw.copy(), verbose = False)
+            final_output = cleaned_raw.get_data(picks = "eeg")
+            return final_output
+        except Exception as exc:
+            print(f"\033[1;33m[WARN]\033[0m ICA artifact removal failed ({exc}). Returning filtered EEG without ICA.")
+            return eeg_channels
+
+    else:
+        print(f"\033[1;34m[INFO]\033[0m No ECG data provided. Skipping ICA artifact removal.")
+        return preprocessed_data
 
 # Plotting function for EEG data
 def visualise_eeg_signal_static(

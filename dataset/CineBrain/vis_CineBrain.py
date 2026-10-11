@@ -165,14 +165,15 @@ if __name__ == "__main__":
 
     # visualise EEG data for subject 0001 - 0th segment
     print("\033[1;34m[INFO]\033[0m\033[1m Visualising EEG data for subject 0001 - 0th segment:\033[0m")
-    subj01_0_eeg = np.load(os.path.join(dataset_dir, "sub-0001", EEG_dir_name, "0.npy"))
-    subj01_0_eeg = subj01_0_eeg[:64, :]  # first 64 is the actual EEG channel
+    subj01_0 = np.load(os.path.join(dataset_dir, "sub-0001", EEG_dir_name, "0.npy"))
+    subj01_0_eeg = subj01_0[:64, :]  # first 64 is the actual EEG channel
+    subj01_0_ecg = subj01_0[64: 65, :]  # 65th is ECG channel
     visualise_eeg_signal_static(
         raw_data = subj01_0_eeg,
         raw_fs = 1000,
         plot_title = "Subject 0001 - 0th segment EEG signal",
         output_dir = os.path.join(vis_save_path, "sub-0001", "0_EEG"),
-        processed_data = preprocess_eeg(subj01_0_eeg),
+        processed_data = preprocess_eeg(subj01_0_eeg, ecg_data = subj01_0_ecg),
         processed_fs = 200,
         processed_low_cut = LOW_CUT_HZ,
         processed_high_cut = HIGH_CUT_HZ
