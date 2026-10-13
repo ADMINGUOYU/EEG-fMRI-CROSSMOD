@@ -50,6 +50,8 @@ dependencies:
         - torchinfo
         - umap-learn
         - tensorboard
+        # for dataset storage/management
+        - lmdb
 
         # Web app provider (Flask)
         - flask
