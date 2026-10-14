@@ -1,7 +1,7 @@
 # file: gen_database.py
 # create the CineBrain database from the files extracted by get_CineBrain.py
 # run with `python -m dataset.CineBrain.gen_database`
-# dependencies: numpy, lmdb, av (PyAV provides the MP4 decoder)
+# dependencies: numpy, lmdb, av (PyAV provides the MP4 decoder and encoder)
 # No additional filtering, normalisation or 4-second delay is applied by default.
 # NOTE: UP - we assumed that CineBrain processed that for us
 
@@ -9,7 +9,9 @@ from __future__ import annotations
 
 # [SET UP INFO] ==========================
 DATASET_PATH = "./data/CineBrain"
-DATABASE_PATH = "./data/CineBrain_database"
+DATAFOLDER_PATH = "./data/CineBrain_database"
+DATABASE_PATH = f"{DATAFOLDER_PATH}/lmdb"
+# Database resources (disk files) are stored in DATAFOLDER_PATH
 DATABASE_NAME = "CineBrain"
 DATABASE_MAP_SIZE = int(1e12)
 SUBJECT_IDS = (1, 2, 3, 4, 5, 6)    # subjects to process (1-6)
@@ -73,6 +75,10 @@ EEG_OUTPUT_SAMPLING_RATE = EEG_SAMPLING_RATE
 VIDEO_SAMPLING_RATE = 8
 SOURCE_FRAMES_PER_CLIP = 33
 VIDEO_CACHE_CLIPS = 2
+# H.264 compression reduces disk usage; decoded pixels may differ from the source.
+# High CRF means more compression and lower quality; low CRF means less compression and higher quality.
+VIDEO_CRF = 18
+VIDEO_PRESET = "medium"
 
 # Prompt if total OR any subject/run loses more than this fraction of its frames.
 # Loss includes incomplete tails, missing EEG/fMRI and missing video dependencies.
@@ -88,6 +94,7 @@ import math
 import pickle
 import re
 from collections import Counter, OrderedDict
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -327,7 +334,11 @@ def confirm_discard(report: dict[str, Any]) -> None:
 
 
 def decode_clip(path: Path) -> np.ndarray:
-    """Decode actual RGB pixels; LMDB stores arrays, never references to MP4 files."""
+    """
+    Decode source RGB pixels for selecting and joining trial frames.
+    """
+
+    # import PyAV library
     import av
 
     # fully decode the short source clip, preserving pixel values and spatial dimensions
@@ -353,6 +364,64 @@ def load_trial_video(trial: dict[str, Any], counts: dict[str, int], cache: Order
         cache.move_to_end(index)
         pieces.append(cache[index][frame_indices[clip_indices == index]])
     return np.concatenate(pieces, axis = 0), times
+
+
+def encode_video(path: Path, video: np.ndarray, times: np.ndarray) -> None:
+    """
+    Save the selected RGB frames as a compressed MP4 with trial timestamps.
+    """
+    
+    # import PyAV library
+    import av
+
+    # create exclusively so existing clips cannot be overwritten by another run
+    with path.open("xb") as handle:
+        try:
+            with av.open(handle, mode = "w", format = "mp4") as container:
+                stream = container.add_stream("libx264", rate = Fraction(str(VIDEO_SAMPLING_RATE)))
+                stream.width = video.shape[2]
+                stream.height = video.shape[1]
+                # retain odd spatial dimensions without cropping or padding
+                stream.pix_fmt = "yuv420p" if stream.width % 2 == 0 and stream.height % 2 == 0 else "yuv444p"
+                stream.options = {"crf": str(VIDEO_CRF), "preset": VIDEO_PRESET}
+                stream.time_base = Fraction(1, 1000000)
+                stream.codec_context.time_base = stream.time_base
+
+                # preserve fractional final intervals as well as both inclusive endpoints
+                for pixels, timestamp in zip(video, times):
+                    frame = av.VideoFrame.from_ndarray(pixels, format = "rgb24")
+                    frame.time_base = stream.codec_context.time_base
+                    frame.pts = round(float(timestamp) / frame.time_base)
+                    for packet in stream.encode(frame):
+                        container.mux(packet)
+                for packet in stream.encode():
+                    container.mux(packet)
+        except BaseException:
+            # remove only the incomplete file created by this call
+            path.unlink(missing_ok = True)
+            raise
+
+
+def save_trial_video(
+        trial: dict[str, Any], counts: dict[str, int], clips_path: Path,
+        cache: OrderedDict[int, np.ndarray], saved_clips: dict[str, dict[str, Any]],
+    ) -> tuple[dict[str, Any], np.ndarray]:
+    # name each segment using original clip IDs and one-based, inclusive frame numbers
+    local_clips, frame_indices, times = video_sample_mapping(trial["frame_offset"], counts)
+    first_clip = int(local_clips[0]) + trial["video_start"]
+    last_clip = int(local_clips[-1]) + trial["video_start"]
+    filename = f"{first_clip:06d}_{int(frame_indices[0]) + 1:04d}_{last_clip:06d}_{int(frame_indices[-1]) + 1:04d}.mp4"
+
+    # subjects sharing a stimulus segment reference the same generated file
+    if filename not in saved_clips:
+        video, times = load_trial_video(trial, counts, cache)
+        path = clips_path / filename
+        encode_video(path, video, times)
+        saved_clips[filename] = {
+            "storage": "disk", "path": str(path.resolve()), "type": "mp4",
+            "offset_index": 0, "shape": tuple(video.shape), "dtype": str(video.dtype),
+        }
+    return saved_clips[filename], times
 
 
 def load_trial_neural(trial: dict[str, Any], counts: dict[str, int]) -> tuple[np.ndarray, np.ndarray]:
@@ -394,6 +463,10 @@ def generation_metadata(counts: dict[str, int], report: dict[str, Any]) -> dict[
         "trial_duration_seconds": FMRI_FRAMES_PER_TRIAL * FMRI_TR_SECONDS,
         "eeg_sampling_rate": EEG_OUTPUT_SAMPLING_RATE, "video_sampling_rate": VIDEO_SAMPLING_RATE,
         "video_layout": "THWC RGB uint8", "eeg_layout": "channels, samples",
+        "video_storage": "disk", "video_codec": "libx264", "video_crf": VIDEO_CRF,
+        "video_preset": VIDEO_PRESET,
+        "video_filename": "{first_clip_id:06d}_{first_frame:04d}_{last_clip_id:06d}_{last_frame:04d}.mp4; one-based inclusive frame numbers",
+        "clips_path": str((Path(DATAFOLDER_PATH) / "clips").resolve()),
         "fmri_layout": "frames, voxels", "video_timing": "endpoint-inclusive; nearest source frame; exact trial timestamps stored",
         "temporal_shift_seconds": 0, "counts": counts, "report": report,
         "mapping_verified": False,
@@ -418,9 +491,14 @@ def main() -> None:
     log(f"Preparing {FMRI_FRAMES_PER_TRIAL}-frame trials ({FMRI_FRAMES_PER_TRIAL * FMRI_TR_SECONDS:g} s); EEG and fMRI hooks are opt-in.")
     log("Neural and video numbering are inferred, not verified by upstream annotations. Review the setup overrides against the remote export.", "WARN")
     plan, report = make_plan(counts)
+    # use the explicit output root for the report and generated video clips
+    datafolder = Path(DATAFOLDER_PATH)
+    datafolder.mkdir(parents = True, exist_ok = True)
+    # output path (lmdb), the parent dir should exist
     output = Path(DATABASE_PATH)
     output.parent.mkdir(parents = True, exist_ok = True)
-    report_path = output.with_name(output.name + "_generation_report.json")
+    # report path (JSON)
+    report_path = datafolder / "generation_report.json"
     report_path.write_text(json.dumps(report, indent = 2), encoding = "utf-8")
     log(f"Discard and mapping report saved to '{report_path}'.")
     confirm_discard(report)
@@ -430,15 +508,20 @@ def main() -> None:
         import av
     except ImportError as exc:
         raise ImportError("Install PyAV on the remote server with 'pip install av'.") from exc
+    av.codec.Codec("libx264", "w")
+    clips_path = datafolder / "clips"
+    clips_path.mkdir(parents = True, exist_ok = True)
+    log(f"Saving H.264 MP4 clips to '{clips_path}' (CRF {VIDEO_CRF}); filenames use one-based, inclusive source frame numbers.")
     metadata = generation_metadata(counts, report)
     cache: OrderedDict[int, np.ndarray] = OrderedDict()
+    saved_clips: dict[str, dict[str, Any]] = {}
     with Database(str(output), mode = "c", map_size = DATABASE_MAP_SIZE) as database:
         database.write_meta_name(DATABASE_NAME)
         write_metadata(database, "generation", metadata)
         try:
             for position, trial in enumerate(plan, start = 1):
                 eeg, fmri = load_trial_neural(trial, counts)
-                video, video_times = load_trial_video(trial, counts, cache)
+                video, video_times = save_trial_video(trial, counts, clips_path, cache, saved_clips)
                 trial_idx = database.insert_trial(
                     subject_id = trial["subject_id"], phase = trial["phase"], state = TRIAL_STATE,
                     resources = {"eeg": eeg, "fmri": fmri, "video": video, "video_times": video_times},
@@ -455,7 +538,7 @@ def main() -> None:
                 })
                 write_metadata(database, f"trial_{trial_idx}", trial_metadata)
                 if position % PROGRESS_EVERY_TRIALS == 0 or position == len(plan):
-                    log(f"Stored {position}/{len(plan)} trials.")
+                    log(f"Stored {position}/{len(plan)} trials and {len(saved_clips)} unique MP4 clips.")
 
             # mark success only after every planned trial and its metadata has been written
             metadata["status"] = "complete"
@@ -464,7 +547,7 @@ def main() -> None:
         except BaseException:
             log(f"Generation stopped. '{output}' is incomplete; choose a new output path for a fresh run. No additional corrupt data were silently discarded.", "ERROR")
             raise
-    log(f"Created '{output}' with {len(plan)} trials and embedded RGB video arrays.", "OK")
+    log(f"Created '{output}' (lmdb PATH) with {len(plan)} trials referencing {len(saved_clips)} MP4 clips in '{clips_path}'.", "OK")
 
 
 if __name__ == "__main__":

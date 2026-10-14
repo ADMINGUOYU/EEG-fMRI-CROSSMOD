@@ -255,7 +255,7 @@ class Database:
         return sorted(list(candidates))
 
     # [Accessor] read a SINGLE modality
-    def read_trial_modality(self, trial_idx: int, modality_name: str):
+    def read_trial_modality(self, trial_idx: int, modality_name: str) -> np.ndarray | str:
         """
         Reads and decodes a specific modality (e.g., 'eeg') for a trial.
 
@@ -267,8 +267,8 @@ class Database:
         5. Decodes and shapes it back into a NumPy array using 'dtype' and 'shape'.
 
         If resource 'storage' == 'disk':
-        1. Accesses the file located at 'path'.
-        2. Safely decodes or streams the segment starting from 'offset_index'.
+        1. Decodes NumPy files starting from 'offset_index'.
+        2. Returns other file paths unchanged for the dataset to unpack later.
         """
         trial_key = f"trial_{trial_idx}".encode('utf-8')
         with self.env.begin(write = False) as txn:
@@ -319,7 +319,8 @@ class Database:
                             return array[keys[0]][offset_index:]
                         return array[offset_index:]
 
-                raise NotImplementedError(f"\033[1;31m[Database] ERROR\033[0m: (read_trial_modality) Direct disk decoding for format '{file_type}' is not implemented yet. The resource path is '{disk_path}'.")
+                # leave all other file formats untouched for the dataset to unpack
+                return disk_path
 
             raise ValueError(f"\033[1;31m[Database] ERROR\033[0m: (read_trial_modality) Unsupported resource storage type '{storage}' for modality '{modality_name}'.")
 
@@ -327,10 +328,10 @@ class Database:
     def read_trial_modalities(self, trial_idx: int) -> dict:
         """
         Reads and decodes all modalities for a given trial.
-        For the modality with a 'path' to actual data, we will try to read the data from file
+        Disk resources return decoded NumPy arrays or unchanged paths for other formats.
 
         Returns:
-            A dictionary mapping modality names to their corresponding NumPy arrays.
+            A dictionary mapping modality names to NumPy arrays or file paths.
         """
         with self.env.begin(write = False) as txn:
             trial_blob = txn.get(f"trial_{trial_idx}".encode('utf-8'), db = self.meta_db)
@@ -516,21 +517,19 @@ class Database:
 
         # if we received a string or path-like object, treat it as a disk path
         if isinstance(resource, (str, os.PathLike)):
-            # convert to absolute path
+            # preserve the supplied path, including relative and extensionless paths
             file_path = os.fspath(resource)
+            # override if we have argument overrides
             if path is not None:
-                file_path = path
-            # treat it as a disk resource when it looks like a real path
-            is_disk_path = os.path.exists(file_path) or bool(os.path.splitext(file_path)[1])
-            if is_disk_path:
-                return {
-                    'storage': 'disk',
-                    'path': os.path.abspath(file_path),
-                    'type': str(file_type or os.path.splitext(file_path)[1].lstrip('.')),
-                    'offset_index': int(offset),
-                    'shape': tuple(shape) if shape is not None else None,
-                    'dtype': str(dtype) if dtype is not None else None
-                }
+                file_path = os.fspath(path)
+            return {
+                'storage': 'disk',
+                'path': str(file_path),
+                'type': str(file_type or os.path.splitext(file_path)[1].lstrip('.')),
+                'offset_index': int(offset),
+                'shape': tuple(shape) if shape is not None else None,
+                'dtype': str(dtype) if dtype is not None else None
+            }
 
         # treat anything else as raw data to be stored in LMDB
         data = self._serialise_array(resource, shape = shape, dtype = dtype)
