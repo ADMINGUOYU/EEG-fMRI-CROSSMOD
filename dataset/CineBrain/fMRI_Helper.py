@@ -6,7 +6,7 @@
 from __future__ import annotations
 import os
 import numpy as np
-import matplotlib.pyplot as plt
+from dataset.CineBrain.preprocessing_hook import PreprocessingFunctions, apply_preprocessing, normalise
 
 # fMRI voxels' info
 # define shape
@@ -25,12 +25,48 @@ AUDITORY_ROIS = {
 }
 
 
+# Loader for one supplied fMRI frame
+def load_fmri(
+        path: str | os.PathLike[str],
+        preprocessing_functions: PreprocessingFunctions = None,
+    ) -> np.ndarray:
+    """
+    Load a numerical .npy file without scaling or applying a temporal shift.
+    """
+    # keep the supplied shape, dtype and values; no raw CIFTI processing is required
+    data = np.load(path, allow_pickle = False)
+    return preprocess_fmri(data, preprocessing_functions = preprocessing_functions)
+
+
+# Preprocessing function for fMRI data
+def preprocess_fmri(
+        fmri_data: np.ndarray,
+        preprocessing_functions: PreprocessingFunctions = None,
+    ) -> np.ndarray:
+    """
+    Apply optional array-to-array hooks to (voxels,) or (frames, voxels).
+
+    None leaves the supplied values unchanged. Bind hook parameters with
+    functools.partial, e.g. partial(normalise, axis = 0) for temporal z-scoring
+    of a stacked trial. No normalisation or delay correction is enabled here.
+    """
+    # allow single frames and temporally stacked trials without flattening either
+    if fmri_data.ndim not in (1, 2):
+        raise ValueError(f"\033[1;31m[ERROR]\033[0m: Expected (voxels,) or (frames, voxels), got {fmri_data.shape}.")
+    result = apply_preprocessing(fmri_data, preprocessing_functions)
+    if result.shape != fmri_data.shape:
+        raise ValueError("\033[1;31m[ERROR]\033[0m: Hooks must preserve the fMRI frame and voxel axes.")
+    return result
+
+
 # fMRI visualiser, plot as signal and shows statistics as variables
 def visualise_fmri_signal_static(
         fmri_data: np.ndarray,
         plot_title: str,
         save_path: str,
     ) -> None:
+
+    import matplotlib.pyplot as plt
 
     # check shape
     if fmri_data.shape != fMRI_shape:
@@ -96,6 +132,8 @@ def visualize_fmri_mesh(
         fMRI: np.ndarray,
         output_dir: str,
     ) -> None:
+
+    import matplotlib.pyplot as plt
 
     # first we try to import the libraries
     try:

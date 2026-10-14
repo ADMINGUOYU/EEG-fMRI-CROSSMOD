@@ -6,9 +6,7 @@
 from __future__ import annotations
 import os
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.signal import butter, iirnotch, filtfilt, welch
-import mne
+from dataset.CineBrain.preprocessing_hook import PreprocessingFunctions, apply_preprocessing, normalise
 
 # EEG info
 EEG_seq_len = 800  # each clip is 0.8s long, sampled at 1,000 Hz
@@ -22,15 +20,108 @@ FILTER_ORDER = 4
 # random SEED
 RNG_SEED = 42
 
+# Loader for one supplied EEG segment (EEG channels followed by ECG)
+def load_eeg(
+        path: str | os.PathLike[str],
+        preprocessing_functions: PreprocessingFunctions = None,
+        *,
+        eeg_channel_count: int | None = 64,
+    ) -> np.ndarray:
+    """
+    Load a .npy file as (channels, samples), then apply optional hooks.
+
+    The first 64 channels are EEG. Set eeg_channel_count = None to retain ECG
+    too, for example when binding an ECG reference to remove_ecg_ica.
+    """
+    # load numerical arrays only and separate EEG from the recorded ECG channel
+    data = np.load(path, allow_pickle = False)
+    if data.ndim != 2:
+        raise ValueError(f"\033[1;31m[ERROR]\033[0m: Expected (channels, samples) in '{path}', got {data.shape}.")
+    if eeg_channel_count is not None:
+        if eeg_channel_count <= 0 or data.shape[0] < eeg_channel_count:
+            raise ValueError(f"\033[1;31m[ERROR]\033[0m: Insufficient EEG channels in '{path}'.")
+        data = data[:eeg_channel_count, :]
+    return preprocess_eeg(data, preprocessing_functions = preprocessing_functions)
+
+
 # Preprocessing function for EEG data
 def preprocess_eeg(
         eeg_data: np.ndarray,
-        ecg_data: np.ndarray = None,
+        preprocessing_functions: PreprocessingFunctions = None,
+        *,
+        ecg_data: np.ndarray | None = None,
+    ) -> np.ndarray:
+    """
+    Apply optional functions to (channels, samples); default is a pass-through.
+    """
+    # check input dimensions
+    if eeg_data.ndim != 2:
+        raise ValueError(f"\033[1;31m[ERROR]\033[0m EEG data must be a 2D array (channels, samples). Got shape: {eeg_data.shape}")
+    result = apply_preprocessing(eeg_data, preprocessing_functions)
+    if result.ndim != 2 or result.shape[0] != eeg_data.shape[0]:
+        raise ValueError("\033[1;31m[ERROR]\033[0m: Hooks must preserve the EEG channel axis.")
+    return result
+
+
+# Optional band-pass filtering hook
+def bandpass_filter(
+        eeg_data: np.ndarray,
+        original_fs: int = EEG_sampling_rate,
+        low_cut: float = LOW_CUT_HZ,
+        high_cut: float = HIGH_CUT_HZ,
+    ) -> np.ndarray:
+    from scipy.signal import butter, filtfilt
+
+    # 1. Band-pass filtering
+    nyquist_freq = 0.5 * original_fs
+    low = low_cut / nyquist_freq
+    high = high_cut / nyquist_freq
+    b_band, a_band = butter(FILTER_ORDER, [low, high], btype = 'band')
+    return filtfilt(b_band, a_band, eeg_data, axis = -1)
+
+
+# Optional notch filtering hook
+def notch_filter(
+        eeg_data: np.ndarray,
+        original_fs: int = EEG_sampling_rate,
+        notch_frequency: float = NOTCH_FREQ_HZ,
+    ) -> np.ndarray:
+    from scipy.signal import iirnotch, filtfilt
+
+    # 2. Notch filtering to remove electrical line noise
+    # A quality factor of 30 is standard for a narrow notch
+    quality_factor = 30.0
+    b_notch, a_notch = iirnotch(notch_frequency, quality_factor, original_fs)
+    return filtfilt(b_notch, a_notch, eeg_data, axis = -1)
+
+
+# Optional downsampling hook
+def downsample_eeg(
+        eeg_data: np.ndarray,
         original_fs: int = EEG_sampling_rate,
         new_fs: int = DOWNSAMPLE_RATE_HZ,
-        low_cut: float = LOW_CUT_HZ,
-        high_cut: float = HIGH_CUT_HZ
     ) -> np.ndarray:
+    from math import gcd
+    from scipy.signal import resample_poly
+
+    # use anti-alias filtering and a rational ratio instead of truncating a stride
+    if original_fs <= 0 or new_fs <= 0:
+        raise ValueError("\033[1;31m[ERROR]\033[0m: Sampling rates must be positive integers.")
+    if new_fs >= original_fs:
+        print(f"\033[1;33m[WARN]\033[0m New sampling rate ({new_fs} Hz) is not lower than original ({original_fs} Hz). Skipping downsampling.")
+        return eeg_data
+    divisor = gcd(original_fs, new_fs)
+    return resample_poly(eeg_data, new_fs // divisor, original_fs // divisor, axis = -1)
+
+
+# Optional ECG-informed ICA hook; supply a sufficiently long, matching ECG reference
+def remove_ecg_ica(
+        eeg_data: np.ndarray,
+        ecg_data: np.ndarray | None = None,
+        original_fs: int = EEG_sampling_rate,
+        minimum_duration_sec: float = 30.0,
+    ) -> np.ndarray:
+    import mne
 
     # check input dimensions
     if eeg_data.ndim != 2:
@@ -55,52 +146,30 @@ def preprocess_eeg(
         if ecg_data.shape[0] > 1:
             print(f"\033[1;33m[WARN]\033[0m Received {ecg_data.shape[0]} ECG channels. Using the first channel for ICA guidance.")
         combined_data = np.concatenate((eeg_data, ecg_for_ica), axis = 0)
-        ecg_channel_count = ecg_data.shape[0]
+        ecg_channel_count = ecg_for_ica.shape[0]
     else:
         combined_data = eeg_data
         ecg_channel_count = 0
         ecg_for_ica = None
     
-    # 1. Band-pass filtering
-    nyquist_freq = 0.5 * original_fs
-    low = low_cut / nyquist_freq
-    high = high_cut / nyquist_freq
-    b_band, a_band = butter(FILTER_ORDER, [low, high], btype = 'band')
-    filtered_data = filtfilt(b_band, a_band, combined_data, axis = -1)
-
-    # 2. Notch filtering to remove electrical line noise
-    # A quality factor of 30 is standard for a narrow notch
-    quality_factor = 30.0
-    b_notch, a_notch = iirnotch(NOTCH_FREQ_HZ, quality_factor, original_fs)
-    notched_data = filtfilt(b_notch, a_notch, filtered_data, axis = -1)
-
-    # 3. Downsampling
-    # ship if the new sampling rate is higher or equal to the original
-    if new_fs >= original_fs:
-        print(f"\033[1;33m[WARN]\033[0m New sampling rate ({new_fs} Hz) is not lower than original ({original_fs} Hz). Skipping downsampling.")
-        preprocessed_data = notched_data
-        current_fs = original_fs
-    else:
-        downsample_factor = int(original_fs / new_fs)
-        preprocessed_data = notched_data[:, ::downsample_factor]
-        current_fs = new_fs
-
-    # 4. ECG-Informed ICA Artifact Removal
+    # ECG-informed ICA artefact removal
+    preprocessed_data = combined_data
+    current_fs = original_fs
     if ecg_data is not None:
         # Calculate the total duration in seconds of the provided signal
         # we terminate the ICA if the signal is too short (so don't provide a single 0.8s clip if you're using CineBrain)
         total_duration_sec = preprocessed_data.shape[1] / current_fs
-        THRESHOLD_ICA_SEC = 30  # seconds
+        THRESHOLD_ICA_SEC = minimum_duration_sec  # seconds
         if total_duration_sec < THRESHOLD_ICA_SEC:
             print(f"\033[1;33m[WARN]\033[0m Total duration of EEG data ({total_duration_sec:.2f}s) is less than the threshold ({THRESHOLD_ICA_SEC}s)")
             # ask user if to continue or not
-            user_input = input("\033[1;33m[WARN]\033[0m Do you want to continue with ICA artifact removal? (y/n): ")
+            user_input = input("\033[1;33m[WARN]\033[0m Do you want to continue with ICA artefact removal? (y/n): ")
             if user_input.lower() != 'y':
-                print(f"\033[1;34m[INFO]\033[0m Skipping ICA artifact removal due to short duration.")
+                print(f"\033[1;34m[INFO]\033[0m Skipping ICA artefact removal due to short duration.")
                 # detach ECG data from EEG data and return only the EEG channels
                 return preprocessed_data[:eeg_channel_count, :]
 
-        # we start ICA artifact removal
+        # we start ICA artefact removal
         eeg_channels = preprocessed_data[:eeg_channel_count, :]
         ecg_channel = preprocessed_data[eeg_channel_count:eeg_channel_count + ecg_channel_count, :]
 
@@ -116,14 +185,14 @@ def preprocess_eeg(
         raw = mne.io.RawArray(data = combined_matrix, info = info, verbose = False)
 
         if eeg_channel_count < 2:
-            print("\033[1;33m[WARN]\033[0m ICA requires at least 2 EEG channels. Returning filtered EEG without ICA.")
+            print("\033[1;33m[WARN]\033[0m ICA requires at least 2 EEG channels. Returning EEG without ICA.")
             return eeg_channels
 
         # Fit ICA on the EEG channels only
         ica = mne.preprocessing.ICA(
             n_components = 0.95,
             method = "fastica",
-            rng = RNG_SEED,
+            random_state = RNG_SEED,
             max_iter = "auto"
         )
 
@@ -135,7 +204,7 @@ def preprocess_eeg(
                 ica = mne.preprocessing.ICA(
                     n_components = fallback_components,
                     method = "fastica",
-                    rng = RNG_SEED,
+                    random_state = RNG_SEED,
                     max_iter = "auto"
                 )
                 ica.fit(inst = raw, picks = "eeg", verbose = False)
@@ -164,11 +233,11 @@ def preprocess_eeg(
             final_output = cleaned_raw.get_data(picks = "eeg")
             return final_output
         except Exception as exc:
-            print(f"\033[1;33m[WARN]\033[0m ICA artifact removal failed ({exc}). Returning filtered EEG without ICA.")
+            print(f"\033[1;33m[WARN]\033[0m ICA artefact removal failed ({exc}). Returning EEG without ICA.")
             return eeg_channels
 
     else:
-        print(f"\033[1;34m[INFO]\033[0m No ECG data provided. Skipping ICA artifact removal.")
+        print(f"\033[1;34m[INFO]\033[0m No ECG data provided. Skipping ICA artefact removal.")
         return preprocessed_data
 
 # Plotting function for EEG data
@@ -182,6 +251,9 @@ def visualise_eeg_signal_static(
         processed_low_cut: float = None,
         processed_high_cut: float = None,
     ) -> None:
+
+    import matplotlib.pyplot as plt
+    from scipy.signal import welch
 
     # if processed is given, other axes must be given too
     if processed_data is not None:
