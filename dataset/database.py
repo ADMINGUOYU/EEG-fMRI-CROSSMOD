@@ -464,8 +464,9 @@ class Database:
         hash_key = self._hash_resource_key(data)
         data_key = f"resource_{hash_key.hex()}".encode('utf-8')
         with self.env.begin(write = True) as txn:
-            if txn.get(data_key, db = self.data_db) is None:
-                txn.put(data_key, data, db = self.data_db)
+            # directly use lmdb no duplicate check (eliminate txn.get() overhead)
+            # we skip duplicated entry, cuz some entries are shared by multiple trials
+            txn.put(data_key, data, db = self.data_db, overwrite = False)
         return data_key
 
     # [INTERNAL] Build a clean resource dict for a modality without forcing the user to manage database keys
