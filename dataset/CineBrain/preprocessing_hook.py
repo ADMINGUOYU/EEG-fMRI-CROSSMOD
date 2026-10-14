@@ -1,5 +1,6 @@
 # file: preprocessing_hook.py
 # shared (maybe used in EEG/fMRI) function hooks for the supplied CineBrain arrays
+# NOTE: EEG_Helper.py has some EEG specific preprocessing functions
 
 from __future__ import annotations
 from collections.abc import Callable, Sequence
