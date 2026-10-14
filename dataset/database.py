@@ -584,4 +584,72 @@ class Database:
 # Entry point (testing)
 # run with `python -m dataset.database`
 if __name__ == "__main__":
-    pass
+
+    # import libraries for testing
+    import shutil
+    import tempfile
+
+    # Create temp dir
+    tmp = tempfile.mkdtemp()
+    db_dir = os.path.join(tmp, "db")
+    print("\033[1;34m[Database] INFO\033[0m: Starting LMDB Database Smoke Test")
+    print(f"\033[1;34m[Database] INFO\033[0m: Temp Database Path: {db_dir}\n")
+
+    try:
+        # Instantiate the database (creates named DBs internally)
+        db = Database(db_dir, mode = 'c', map_size = int(10 * 1024 * 1024))  # 10MB Map for test
+        # set name
+        db.write_meta_name("TestDB")
+        print("\033[1;34m[Database] INFO\033[0m: Database initialized with dual sub-dbs (meta/data).")
+
+        # Insert a trial with dummy data
+        # prepare resources
+        dummy_eeg = np.random.rand(800, 64).astype(np.float32)
+        dummy_fmri_path = os.path.join(tmp, "dummy_fmri.npy")
+        np.save(dummy_fmri_path, np.random.rand(64, 64, 64).astype(np.float32))  # Save dummy fmri data
+        # assert that file saved
+        assert os.path.exists(dummy_fmri_path), f"\033[1;31m[Database] ERROR\033[0m: Dummy fMRI file '{dummy_fmri_path}' was not created."
+        resources = {
+            'eeg': dummy_eeg,
+            'fmri': {
+                'path': dummy_fmri_path,
+                'type': 'npy',
+                'shape': (64, 64, 64),
+                'dtype': 'float32'
+            }
+        }
+        # insert trial
+        trial_idx = db.insert_trial(subject_id = 1, phase = 'train', state = 'resting', resources = resources)
+        print(f"\033[1;34m[Database] INFO\033[0m: Inserted trial {trial_idx} with dummy EEG and fMRI data.")
+
+        # close the database
+        db.close()
+
+        # reopen as read-only and read back the trial
+        db = Database(db_dir, mode = 'r', map_size = int(10 * 1024 * 1024))
+        print("\033[1;34m[Database] INFO\033[0m: Reopened database in read-only mode.")
+        # use subject filter to get trial indices
+        trial_indices = db.filter_trials(subject_id = 1)
+        # assert we have the trial we just inserted
+        assert trial_idx in trial_indices, f"\033[1;31m[Database] ERROR\033[0m: Inserted trial {trial_idx} not found in filter results."
+        # read back the EEG modality
+        eeg_data = db.read_trial_modality(trial_idx, 'eeg')
+        assert np.allclose(eeg_data, dummy_eeg), f"\033[1;31m[Database] ERROR\033[0m: Retrieved EEG data does not match the original."
+        # read back the fMRI modality
+        fmri_data = db.read_trial_modality(trial_idx, 'fmri')
+        original_fmri_data = np.load(dummy_fmri_path)
+        assert np.allclose(fmri_data, original_fmri_data), f"\033[1;31m[Database] ERROR\033[0m: Retrieved fMRI data does not match the original."
+        # try read all modalities
+        all_modalities = db.read_trial_modalities(trial_idx)
+        assert 'eeg' in all_modalities and 'fmri' in all_modalities, f"\033[1;31m[Database] ERROR\033[0m: Retrieved modalities do not include both EEG and fMRI."
+        # print a brief summary
+        db.print_brief()
+
+        # close the database
+        db.close()
+
+    finally:
+        # Cleanup test directories safely
+        shutil.rmtree(tmp, ignore_errors = True)
+    
+    print("\033[1;32m[Database] OK\033[0m: Test completed successfully.")
