@@ -105,6 +105,9 @@ from dataset.database import Database
 from dataset.CineBrain.EEG_Helper import load_eeg, preprocess_eeg
 from dataset.CineBrain.fMRI_Helper import load_fmri, preprocess_fmri
 
+# import time to estimate remaining time
+import time
+
 
 # logger
 def log(message: str, level: str = "INFO") -> None:
@@ -524,6 +527,9 @@ def main() -> None:
         database.write_db_entry("meta.meta.name", DATABASE_NAME, mode = "o")
         database.write_db_entry("meta.generation", metadata, mode = "a") # new entry
         try:
+            # before looping, track time
+            start_time = time.time()
+
             for position, trial in enumerate(plan, start = 1):
                 # get resources
                 eeg, fmri = load_trial_neural(trial, counts)
@@ -546,7 +552,13 @@ def main() -> None:
                 })
                 database.write_db_entry(f"meta.trial_{trial_idx}.cinebrain", trial_metadata, mode = "a") # new nested entry
                 if position % PROGRESS_EVERY_TRIALS == 0 or position == len(plan):
-                    log(f"Stored {position}/{len(plan)} trials and {len(saved_clips)} unique MP4 clips.")
+                    # estimate remaining time
+                    elapsed = time.time() - start_time
+                    remaining = elapsed / position * (len(plan) - position)
+                    # convert to minutes and seconds
+                    remaining_minutes = int(remaining // 60)
+                    remaining_seconds = int(remaining % 60)
+                    log(f"Stored {position}/{len(plan)} trials and {len(saved_clips)} unique MP4 clips. Remaining time: {remaining_minutes} min(s) {remaining_seconds} sec(s).")
 
             # mark success only after every planned trial and its metadata has been written
             database.write_db_entry("meta.generation.status", "complete", mode = "o") # previously existing entry
