@@ -401,7 +401,7 @@ if __name__ == "__main__":
     try:
         # instantiate a tiny database for a quick smoke test.
         db = Database(db_dir, mode = 'c', map_size = int(10 * 1024 * 1024))
-        db.write_meta_name("TestDB")
+        db.write_db_entry("meta.meta.name", "TestDB", mode = "o")
 
         # build a minimal trial with one in-memory and one disk-backed modality.
         dummy_eeg = np.random.rand(8, 4).astype(np.float32)

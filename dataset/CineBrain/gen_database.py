@@ -521,8 +521,8 @@ def main() -> None:
 
     # create the database and write all trials and their metadata
     with Database(str(output), mode = "c", map_size = DATABASE_MAP_SIZE) as database:
-        database.write_meta_name(DATABASE_NAME)
-        database.write_db_entry("meta.generation", metadata, overwrite = False) # new entry
+        database.write_db_entry("meta.meta.name", DATABASE_NAME, mode = "o")
+        database.write_db_entry("meta.generation", metadata, mode = "a") # new entry
         try:
             for position, trial in enumerate(plan, start = 1):
                 # get resources
@@ -537,21 +537,19 @@ def main() -> None:
 
                 # attach provenance to the existing trial record without altering its resources
                 # NOTE: adds attributes
-                trial_metadata = database.get_db_attribute(f"meta.trial_{trial_idx}")
-                trial_metadata["cinebrain"] = dict(trial)
-                trial_metadata["cinebrain"].update({
+                trial_metadata = dict(trial)
+                trial_metadata.update({
                     "duration_seconds": FMRI_FRAMES_PER_TRIAL * FMRI_TR_SECONDS,
                     "episode_start_seconds": trial["frame_offset"] * FMRI_TR_SECONDS,
                     "eeg_sampling_rate": EEG_OUTPUT_SAMPLING_RATE,
                     "fmri_tr_seconds": FMRI_TR_SECONDS,
                 })
-                database.write_db_entry(f"meta.trial_{trial_idx}", trial_metadata, overwrite = True) # previously existing entry
+                database.write_db_entry(f"meta.trial_{trial_idx}.cinebrain", trial_metadata, mode = "a") # new nested entry
                 if position % PROGRESS_EVERY_TRIALS == 0 or position == len(plan):
                     log(f"Stored {position}/{len(plan)} trials and {len(saved_clips)} unique MP4 clips.")
 
             # mark success only after every planned trial and its metadata has been written
-            metadata["status"] = "complete"
-            database.write_db_entry("meta.generation", metadata, overwrite = True) # previously existing entry
+            database.write_db_entry("meta.generation.status", "complete", mode = "o") # previously existing entry
             database.print_brief()
         except BaseException:
             log(f"Generation stopped. '{output}' is incomplete; choose a new output path for a fresh run. No additional corrupt data were silently discarded.", "ERROR")

@@ -16,6 +16,10 @@
 #                                                           # equals to the entries corresponding to this subject
 #                               }
 #              'trial_n' : total number of trials in the dataset (should match the sum of above)
+#              Query/Inverted Index keys:
+#              'idx_subjects': dict of {<subject_id>(int): [int, int, ...]} where each list is a list of trial indices belonging to a subject
+#              'idx_phase'   : dict of {<phase_name>(str): [int, int, ...]} where each list is a list of trial indices belonging to a phase split
+#              'idx_state'   : dict of {<state_name>(str): [int, int, ...]} where each list is a list of trial indices belonging to an experimental condition
 #
 #     - Meta keys:
 #       - 'trial_<trial_idx:int>': mapping information for a single trial
@@ -38,11 +42,6 @@
 #                               }
 #                             }
 #
-#     - Query/Inverted Index keys:
-#       - 'idx_subjects': dict of {<subject_id>(int): [int, int, ...]} where each list is a list of trial indices belonging to a subject
-#       - 'idx_phase'   : dict of {<phase_name>(str): [int, int, ...]} where each list is a list of trial indices belonging to a phase split
-#       - 'idx_state'   : dict of {<state_name>(str): [int, int, ...]} where each list is a list of trial indices belonging to an experimental condition
-#
 # B) 'data': stores the raw high-dimensional multi-modal binary buffers
 #     - Data keys (fast index-mapped direct pointers):
 #       - '<data_key>'   : raw binary buffer bytes (i.e via ndarray.tobytes())
@@ -56,6 +55,11 @@ import pickle
 import hashlib
 import numpy as np
 from typing import Any
+
+# import MutableMapping for type checking
+# NOTE: a mutable mapping is a dictionary-like object that supports:
+#       item assignment, deletion, and iteration.
+from collections.abc import MutableMapping
 
 
 # Database class
@@ -129,58 +133,79 @@ class Database:
                     'idx_state': {}
                 }
                 # write to 'meta' sub-database
-                txn.put(b'meta', pickle.dumps(meta_dict), db = self.meta_db)
+                self._write_meta_dict(meta_dict, txn = txn)
 
-    # [Mutator] update meta-data 'name'
-    def write_meta_name(self, name: str):
-        """
-        In the 'meta' sub-database, sets 'meta'['name'] = name.
-        Our database will count the 'subject_dict', 'trial_n' and
-        the inverted index lists automatically when you write trial entries.
-        """
-        meta_dict = self._read_meta_dict()
-        meta_dict['name'] = str(name)
-        self._write_meta_dict(meta_dict)
-
-    # [Mutator] write / overwrite arbitrary things
+    # [Mutator] append or overwrite arbitrary entries
     # DANGEROUS
-    def write_db_entry(self, path: str, value: Any, overwrite: bool = False):
+    def write_db_entry(self, path: str, value: Any, mode: str = 'a') -> None:
         """
-        Writes an arbitrary entry to the database at the specified path.
+        Writes a pickled value at '<meta|data>.<database_key>[.<dict_key>...]'.
 
         Arguments:
-            path : str : dot-separated path to the entry (ONLY TWO LEVELS: '<meta|data>.<key>')
-            value: Any : the value to write at the specified path
-            overwrite: bool : aligns with LMDB txn.put() overwrite flag; if False, will raise an error if the entry already exists
+            path  (str) : dot-separated path to the entry (e.g., 'meta.meta.name')
+            value (Any) : the value to write (will be pickled)
+            mode  (str) : 'a' to append a new entry, 'o' to overwrite an existing entry
+
+        Mode 'a' adds only an absent final key; mode 'o' replaces only an existing
+        final key. Every parent must already exist and support dictionary updates.
+        This low-level API does not rebuild trial indexes or validate their schema.
+        Entries in 'data' written here are pickled, unlike raw modality buffers.
         """
 
-        # Warn user once
+        # parse and validate the entire path before opening a write transaction
+        components = path.split('.')
+        error = "\033[1;31m[Database] ERROR\033[0m: (write_db_entry)"
+        if len(components) < 2 or not all(components):
+            raise ValueError(f"{error} Invalid path '{path}'. Expected '<meta|data>.<key>[.<subkey>...]' without empty keys.")
+        if components[0] not in ['meta', 'data']:
+            raise ValueError(f"{error} Invalid database '{components[0]}'. Must be 'meta' or 'data'.")
+        if mode not in ['a', 'o']:
+            raise ValueError(f"{error} Invalid mode '{mode}'. Must be 'a' (append) or 'o' (overwrite).")
+        if self.mode == 'r':
+            raise PermissionError(f"{error} Cannot write to a read-only database.")
+
+        # warn once per instance because arbitrary edits can invalidate database relationships
         if not getattr(self, '_arbitrary_write_warning', False):
             print(f"\033[1;33m[Database] WARN\033[0m: (write_db_entry) You are about to write an arbitrary entry to the database. This may corrupt the database if not done carefully.")
             print(f"  Path: '{path}'")
             print(f"  Value type: {type(value)}")
             setattr(self, '_arbitrary_write_warning', True)
 
-        # parse the path
-        components = path.split('.')
-        # only two levels are allowed: <meta|data>.<key>
-        if len(components) != 2:
-            raise ValueError(f"\033[1;31m[Database] ERROR\033[0m: (write_db_entry) Invalid path '{path}'. Must be exactly '<meta|data>.<key>'.")
-    
-        # get the database component
-        db_name = components[0]
-        if db_name not in ['meta', 'data']:
-            raise ValueError(f"\033[1;31m[Database] ERROR\033[0m: (write_db_entry) Invalid database '{db_name}'. Must be 'meta' or 'data'.")
-    
-        # Access the database
-        db = self.meta_db if db_name == 'meta' else self.data_db
-
-        # directly write the value to the database
-        # LMDB handles the overwrite/append logic based on the 'overwrite' flag
+        db = self.meta_db if components[0] == 'meta' else self.data_db
         key = components[1].encode('utf-8')
+        # check existence, traverse once and commit together to prevent lost updates
         with self.env.begin(write = True) as txn:
-            if not txn.put(key, pickle.dumps(value), db = db, overwrite = overwrite):
-                raise FileExistsError(f"\033[1;31m[Database] ERROR\033[0m: (write_db_entry) Entry '{path}' already exists and overwrite is set to False.")
+            blob = txn.get(key, db = db)
+            exists = blob is not None
+            payload = value
+            if len(components) > 2:
+                if not exists:
+                    raise KeyError(f"{error} Parent entry '{components[0]}.{components[1]}' does not exist.")
+                try:
+                    payload = pickle.loads(blob)
+                except Exception as exc:
+                    raise ValueError(f"{error} Parent entry is not a decodable pickled dictionary.") from exc
+                parent = payload
+                # never create missing intermediate dictionaries or invoke their default factories
+                for subkey in components[2:-1]:
+                    if not isinstance(parent, MutableMapping):
+                        raise TypeError(f"{error} Parent of '{subkey}' is not a mutable dictionary.")
+                    if subkey not in parent:
+                        raise KeyError(f"{error} Parent key '{subkey}' does not exist in '{path}'.")
+                    parent = parent[subkey]
+                if not isinstance(parent, MutableMapping):
+                    raise TypeError(f"{error} Parent of '{components[-1]}' is not a mutable dictionary.")
+                exists = components[-1] in parent
+
+            # append and overwrite are deliberately mutually exclusive
+            if mode == 'a' and exists:
+                raise FileExistsError(f"{error} Entry '{path}' already exists; append requires a new key.")
+            if mode == 'o' and not exists:
+                raise KeyError(f"{error} Entry '{path}' does not exist; overwrite requires an existing key.")
+            if len(components) > 2:
+                parent[components[-1]] = value
+            # serialisation failures abort the transaction without changing the stored entry
+            txn.put(key, pickle.dumps(payload), db = db)
 
     # [Mutator] insert a whole trial in one call
     def insert_trial(self, subject_id: int, phase: str, state: str, resources: dict, trial_idx: int = None) -> int:
@@ -213,19 +238,6 @@ class Database:
             trial_idx, resource_key = db.insert_trial(subject_id = 1, phase = 'train', state = 'resting', resources = resources)
         """
 
-        # read the current meta dictionary for the index update
-        meta_dict = self._read_meta_dict()
-
-        # determine the trial index: if not provided, generate a new one
-        if trial_idx is None:
-            trial_idx = self._get_new_trial_index()
-
-        # refuse to overwrite an existing trial entry
-        trial_key = f"trial_{trial_idx}"
-        with self.env.begin(write = False) as txn:
-            if txn.get(trial_key.encode('utf-8'), db = self.meta_db) is not None:
-                raise FileExistsError(f"\033[1;31m[Database] ERROR\033[0m: (insert_trial) Trial '{trial_key}' already exists.")
-
         # build the modality mapping for this trial
         # resources
         resource_dict = {}
@@ -244,7 +256,13 @@ class Database:
 
         # write the trial and update the inverted indexes together
         with self.env.begin(write = True) as txn:
-            txn.put(trial_key.encode('utf-8'), pickle.dumps(trial_entry), db = self.meta_db)
+            # allocate the index from the same metadata snapshot that we update
+            meta_dict = self._read_meta_dict(txn = txn)
+            if trial_idx is None:
+                trial_idx = int(meta_dict['trial_n'])
+            trial_key = f"trial_{trial_idx}".encode('utf-8')
+            if not txn.put(trial_key, pickle.dumps(trial_entry), db = self.meta_db, overwrite = False):
+                raise FileExistsError(f"\033[1;31m[Database] ERROR\033[0m: (insert_trial) Trial '{trial_key.decode('utf-8')}' already exists.")
 
             subject_entry = meta_dict.setdefault('subject_dict', {}).setdefault(int(subject_id), {'trial_n': 0})
             subject_entry['trial_n'] = int(subject_entry.get('trial_n', 0)) + 1
@@ -262,7 +280,9 @@ class Database:
             # update the total trial count
             meta_dict['trial_n'] = max(int(meta_dict.get('trial_n', 0)), trial_idx + 1)
             meta_dict['subject_dict'][int(subject_id)] = subject_entry
-            txn.put(b'meta', pickle.dumps(meta_dict), db = self.meta_db)
+            
+            # update meta
+            self._write_meta_dict(meta_dict, txn = txn)
 
         return trial_idx
 
@@ -413,7 +433,7 @@ class Database:
         # retrieve the value
         with self.env.begin(write = False) as txn:
             if db_name == 'meta':
-                meta_dict = self._read_meta_dict()
+                meta_dict = self._read_meta_dict(txn = txn)
                 if components[1] in meta_dict:
                     value = meta_dict[components[1]]
                 else:
@@ -482,17 +502,24 @@ class Database:
         # done
         return
 
-    # [INTERNAL] Load and store the root metadata dictionary
-    def _read_meta_dict(self) -> dict:
-        with self.env.begin(write = False) as txn:
-            value = txn.get(b'meta', db = self.meta_db)
-            if value is None:
-                raise KeyError(f"\033[1;31m[Database] ERROR\033[0m: (_read_meta_dict) Root 'meta' key is missing.")
-            return pickle.loads(value)
+    # [INTERNAL] Load the root metadata dictionary
+    def _read_meta_dict(self, txn: lmdb.Transaction | None = None) -> dict:
+        # reuse the caller's transaction so related reads and writes share one snapshot
+        if txn is None:
+            with self.env.begin(write = False) as transaction:
+                return self._read_meta_dict(txn = transaction)
+        value = txn.get(b'meta', db = self.meta_db)
+        if value is None:
+            raise KeyError(f"\033[1;31m[Database] ERROR\033[0m: (_read_meta_dict) Root 'meta' key is missing.")
+        return pickle.loads(value)
 
     # [INTERNAL] Write the root metadata dictionary
-    def _write_meta_dict(self, meta_dict: dict):
-        with self.env.begin(write = True) as txn:
+    def _write_meta_dict(self, meta_dict: dict, txn: lmdb.Transaction | None = None) -> None:
+        # keep metadata and trial updates in one atomic transaction when supplied
+        if txn is None:
+            with self.env.begin(write = True) as transaction:
+                self._write_meta_dict(meta_dict, txn = transaction)
+        else:
             txn.put(b'meta', pickle.dumps(meta_dict), db = self.meta_db)
 
     # [INTERNAL] Hash resource keys
@@ -616,7 +643,7 @@ class Database:
     def _get_new_trial_index(self) -> int:
         # read the current total trial count without opening a write transaction
         with self.env.begin(write = False) as txn:
-            meta_dict = pickle.loads(txn.get(b'meta', db = self.meta_db))
+            meta_dict = self._read_meta_dict(txn = txn)
             trial_n = meta_dict['trial_n']
         return int(trial_n)
 
@@ -639,7 +666,7 @@ if __name__ == "__main__":
         # Instantiate the database (creates named DBs internally)
         db = Database(db_dir, mode = 'c', map_size = int(10 * 1024 * 1024))  # 10MB Map for test
         # set name
-        db.write_meta_name("TestDB")
+        db.write_db_entry("meta.meta.name", "TestDB", mode = 'o')
         print("\033[1;34m[Database] INFO\033[0m: Database initialized with dual sub-dbs (meta/data).")
 
         # Insert a trial with dummy data
