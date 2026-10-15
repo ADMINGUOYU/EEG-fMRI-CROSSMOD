@@ -31,6 +31,8 @@ RUNS_PER_SUBJECT = 20
 EPISODE_DURATION_SECONDS = 18 * 60
 FMRI_TR_SECONDS = 0.8
 CLIP_DURATION_SECONDS = 4.0
+# NOTE: this is variable, set to determine how long a trails should be
+# NOTE: the maximum is no more than all frames WITHIN a run (i.e. an episode's duration)
 FMRI_FRAMES_PER_TRIAL = 5  # 5 = 4 s; 20 = 16 s; 2 = 1.6 s; 3 = 2.4 s
 TRAIN_RUNS = tuple(range(1, 19))
 VAL_RUNS = ()
@@ -44,13 +46,14 @@ FMRI_VOXEL_COUNT = 18946
 # Infer neural numbering as subject-local, zero-based, contiguous 1350-frame
 # runs. Infer clip numbering as S07E01-10, S09E01-10, S11E01-10, 270 clips each.
 # CSVs establish episode identities, but cannot prove either numbering scheme.
-# Missing files NEVER renumber later frames. Override starts if the server's
-# export uses another order or globally numbered brain files.
 VIDEO_EPISODE_ORDER = tuple((season, episode) for season in (7, 9, 11) for episode in range(1, 11))
 SUBJECT_SEASONS = {1: (7, 9), 2: (7, 9), 3: (7, 11), 4: (7, 11), 5: (7, 11), 6: (7, 9)}
 EPISODES_PER_SEASON = 10
 NEURAL_FIRST_INDEX = 0
 VIDEO_FIRST_INDEX = 0
+# NOTE: following run-starts are the first number of the sequence
+#       if episode A starts from 000010.mp4 to 000019.mp4, the start of A is 10
+#       Override if needed, our code will by default assign automatically.
 # Keys are (subject_id, run); values are the first numbered neural file.
 NEURAL_RUN_STARTS: dict[tuple[int, int], int] = {}
 # Keys are (season, episode); values are the first numbered video clip.
@@ -91,7 +94,6 @@ PROGRESS_EVERY_TRIALS = 100
 import csv
 import json
 import math
-import pickle
 import re
 from collections import Counter, OrderedDict
 from fractions import Fraction
@@ -449,12 +451,6 @@ def load_trial_neural(trial: dict[str, Any], counts: dict[str, int]) -> tuple[np
     return eeg, fmri
 
 
-def write_metadata(database: Database, key: str, value: dict[str, Any]) -> None:
-    # use a separate named metadata key, compatible with Database.get_db_attribute
-    with database.env.begin(write = True) as transaction:
-        transaction.put(key.encode("utf-8"), pickle.dumps(value), db = database.meta_db)
-
-
 def generation_metadata(counts: dict[str, int], report: dict[str, Any]) -> dict[str, Any]:
     # retain configuration and assumptions so the inferred mapping can be audited later
     return {
@@ -486,10 +482,11 @@ def generation_metadata(counts: dict[str, int], report: dict[str, Any]) -> dict[
 # Entry point
 # run with `python -m dataset.CineBrain.gen_database`
 def main() -> None:
-    # finish the loss audit before creating any database files
+    # check the setup before creating any database files
     counts = validate_setup()
     log(f"Preparing {FMRI_FRAMES_PER_TRIAL}-frame trials ({FMRI_FRAMES_PER_TRIAL * FMRI_TR_SECONDS:g} s); EEG and fMRI hooks are opt-in.")
     log("Neural and video numbering are inferred, not verified by upstream annotations. Review the setup overrides against the remote export.", "WARN")
+    # this 'plan' plans every trail to be extracted (subject has some runs on some episodes)
     plan, report = make_plan(counts)
     # use the explicit output root for the report and generated video clips
     datafolder = Path(DATAFOLDER_PATH)
@@ -503,31 +500,43 @@ def main() -> None:
     log(f"Discard and mapping report saved to '{report_path}'.")
     confirm_discard(report)
 
-    # check the video dependency before opening LMDB; malformed payloads fail loudly
+    # check video dependency library
     try:
         import av
     except ImportError as exc:
-        raise ImportError("Install PyAV on the remote server with 'pip install av'.") from exc
+        raise ImportError("PyAV missing. Install with 'pip install av'.") from exc
+    # set up the H.264 encoder for MP4 output; PyAV will raise if unavailable
     av.codec.Codec("libx264", "w")
+
+    # create dir for generated clips (to serve our custom trails)
     clips_path = datafolder / "clips"
     clips_path.mkdir(parents = True, exist_ok = True)
     log(f"Saving H.264 MP4 clips to '{clips_path}' (CRF {VIDEO_CRF}); filenames use one-based, inclusive source frame numbers.")
+    
+    # generate metadata for the database
     metadata = generation_metadata(counts, report)
+
     cache: OrderedDict[int, np.ndarray] = OrderedDict()
     saved_clips: dict[str, dict[str, Any]] = {}
+
+    # create the database and write all trials and their metadata
     with Database(str(output), mode = "c", map_size = DATABASE_MAP_SIZE) as database:
         database.write_meta_name(DATABASE_NAME)
-        write_metadata(database, "generation", metadata)
+        database.write_db_entry("meta.generation", metadata, overwrite = False) # new entry
         try:
             for position, trial in enumerate(plan, start = 1):
+                # get resources
                 eeg, fmri = load_trial_neural(trial, counts)
                 video, video_times = save_trial_video(trial, counts, clips_path, cache, saved_clips)
+                
+                # insert trail
                 trial_idx = database.insert_trial(
                     subject_id = trial["subject_id"], phase = trial["phase"], state = TRIAL_STATE,
                     resources = {"eeg": eeg, "fmri": fmri, "video": video, "video_times": video_times},
                 )
 
                 # attach provenance to the existing trial record without altering its resources
+                # NOTE: adds attributes
                 trial_metadata = database.get_db_attribute(f"meta.trial_{trial_idx}")
                 trial_metadata["cinebrain"] = dict(trial)
                 trial_metadata["cinebrain"].update({
@@ -536,13 +545,13 @@ def main() -> None:
                     "eeg_sampling_rate": EEG_OUTPUT_SAMPLING_RATE,
                     "fmri_tr_seconds": FMRI_TR_SECONDS,
                 })
-                write_metadata(database, f"trial_{trial_idx}", trial_metadata)
+                database.write_db_entry(f"meta.trial_{trial_idx}", trial_metadata, overwrite = True) # previously existing entry
                 if position % PROGRESS_EVERY_TRIALS == 0 or position == len(plan):
                     log(f"Stored {position}/{len(plan)} trials and {len(saved_clips)} unique MP4 clips.")
 
             # mark success only after every planned trial and its metadata has been written
             metadata["status"] = "complete"
-            write_metadata(database, "generation", metadata)
+            database.write_db_entry("meta.generation", metadata, overwrite = True) # previously existing entry
             database.print_brief()
         except BaseException:
             log(f"Generation stopped. '{output}' is incomplete; choose a new output path for a fresh run. No additional corrupt data were silently discarded.", "ERROR")

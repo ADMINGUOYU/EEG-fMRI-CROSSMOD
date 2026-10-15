@@ -12,7 +12,7 @@
 #       - 'meta': basic attributes (dictionary of)
 #              'name' : name of the dataset
 #              'subject_dict' : {
-#                                   '<subject_id>(int)' : {'trial_n' : (number of trials), ... (extensible) }
+#                                   '<subject_id>(int)' : {'trial_n' : (number of trials), }
 #                                                           # equals to the entries corresponding to this subject
 #                               }
 #              'trial_n' : total number of trials in the dataset (should match the sum of above)
@@ -141,6 +141,46 @@ class Database:
         meta_dict = self._read_meta_dict()
         meta_dict['name'] = str(name)
         self._write_meta_dict(meta_dict)
+
+    # [Mutator] write / overwrite arbitrary things
+    # DANGEROUS
+    def write_db_entry(self, path: str, value: Any, overwrite: bool = False):
+        """
+        Writes an arbitrary entry to the database at the specified path.
+
+        Arguments:
+            path : str : dot-separated path to the entry (ONLY TWO LEVELS: '<meta|data>.<key>')
+            value: Any : the value to write at the specified path
+            overwrite: bool : aligns with LMDB txn.put() overwrite flag; if False, will raise an error if the entry already exists
+        """
+
+        # Warn user once
+        if not getattr(self, '_arbitrary_write_warning', False):
+            print(f"\033[1;33m[Database] WARN\033[0m: (write_db_entry) You are about to write an arbitrary entry to the database. This may corrupt the database if not done carefully.")
+            print(f"  Path: '{path}'")
+            print(f"  Value type: {type(value)}")
+            setattr(self, '_arbitrary_write_warning', True)
+
+        # parse the path
+        components = path.split('.')
+        # only two levels are allowed: <meta|data>.<key>
+        if len(components) != 2:
+            raise ValueError(f"\033[1;31m[Database] ERROR\033[0m: (write_db_entry) Invalid path '{path}'. Must be exactly '<meta|data>.<key>'.")
+    
+        # get the database component
+        db_name = components[0]
+        if db_name not in ['meta', 'data']:
+            raise ValueError(f"\033[1;31m[Database] ERROR\033[0m: (write_db_entry) Invalid database '{db_name}'. Must be 'meta' or 'data'.")
+    
+        # Access the database
+        db = self.meta_db if db_name == 'meta' else self.data_db
+
+        # directly write the value to the database
+        # LMDB handles the overwrite/append logic based on the 'overwrite' flag
+        key = components[1].encode('utf-8')
+        with self.env.begin(write = True) as txn:
+            if not txn.put(key, pickle.dumps(value), db = db, overwrite = overwrite):
+                raise FileExistsError(f"\033[1;31m[Database] ERROR\033[0m: (write_db_entry) Entry '{path}' already exists and overwrite is set to False.")
 
     # [Mutator] insert a whole trial in one call
     def insert_trial(self, subject_id: int, phase: str, state: str, resources: dict, trial_idx: int = None) -> int:
