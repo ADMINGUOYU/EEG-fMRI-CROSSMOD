@@ -40,6 +40,9 @@ dependencies:
         - opencv-python-headless
         - scikit-image
 
+        # Video processing
+        - av>=14
+
         # EEG processing
         - h5py
         - mne
@@ -52,7 +55,6 @@ dependencies:
         - tensorboard
         # for dataset storage/management
         - lmdb
-
         # Web app provider (Flask)
         - flask
 
