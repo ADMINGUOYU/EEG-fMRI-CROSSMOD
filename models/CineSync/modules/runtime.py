@@ -34,7 +34,7 @@ def setup_device(args: argparse.Namespace) -> tuple[torch.device, int, int]:
     rank, world = int(os.environ.get('RANK', 0)), int(os.environ.get('WORLD_SIZE', 1))
     if args.device.startswith('cuda'):
         local_rank = int(os.environ.get('LOCAL_RANK', 0))
-        device = torch.device(f'cuda:{local_rank}' if world > 1 else args.device)
+        device = torch.device(f'cuda:{local_rank}')
         torch.cuda.set_device(device)
     else:
         device = torch.device(args.device)
