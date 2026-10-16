@@ -3,6 +3,7 @@
 from __future__ import annotations
 import argparse
 import json
+import math
 from contextlib import nullcontext
 from dataclasses import asdict
 import torch
@@ -12,6 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 from ....modules.runtime import (add_common_arguments, configure_huggingface, setup_device,
     create_run, make_loader, log, atomic_checkpoint, model_state, restore_model, load_checkpoint)
 from ....modules.encoders.fmri import FMRIConfig
+from ....modules.scheduling import CineBrainLR
 from ..align import CineSyncFMRIAlign
 
 
@@ -22,6 +24,12 @@ def parser_for(stage: str) -> argparse.ArgumentParser:
     parser.add_argument('--epochs', type = int, default = 50 if stage == 'align' else 100000)
     parser.add_argument('--max-steps', type = int, default = None if stage == 'align' else 5000)
     parser.add_argument('--lr', type = float, default = 1e-4)
+    parser.add_argument('--lr-decay-style', choices = ['constant', 'linear', 'cosine'], default = 'linear')
+    parser.add_argument('--lr-decay-steps', type = int, default = None)
+    parser.add_argument('--lr-warmup', type = float, default = 0.01)
+    parser.add_argument('--lr-decay-ratio', type = float, default = 0.1)
+    parser.add_argument('--lr-auto-warmup-steps', type = int, default = 100)
+    parser.add_argument('--lr-auto-warmup-rate', type = float, default = 0.05)
     parser.add_argument('--weight-decay', type = float, default = 0.01)
     parser.add_argument('--gradient-accumulation', type = int, default = 1)
     parser.add_argument('--max-grad-norm', type = float, default = 1.0)
@@ -62,6 +70,10 @@ def main(stage: str) -> None:
     if resumed and resumed['stage'] != stage:
         raise ValueError('Resume checkpoint belongs to a different stage.')
     if resumed:
+        # retain the saved schedule when continuing an existing run
+        for key in ('lr', 'lr_decay_style', 'lr_decay_steps', 'lr_warmup', 'lr_decay_ratio',
+                    'lr_auto_warmup_steps', 'lr_auto_warmup_rate'):
+            setattr(args, key, resumed['arguments'][key])
         config = FMRIConfig(**resumed['encoder_config'])
         # architecture and teacher/base settings must come from the saved run
         for key in ('siglip_model', 'normalise_contrastive', 'cogvideo_model', 'lora_rank',
@@ -104,13 +116,24 @@ def main(stage: str) -> None:
         restore_model(model, resumed)
     optimiser = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr = args.lr,
                                  betas = (0.9, 0.95), weight_decay = args.weight_decay)
+    dataset, loader, sampler = make_loader(args, True, rank, world)
+    # schedule optimiser updates, accounting for the final partial accumulation group
+    total_steps = args.epochs * math.ceil(len(loader) / args.gradient_accumulation)
+    if args.max_steps is not None:
+        total_steps = min(total_steps, args.max_steps)
+    if args.lr_decay_steps is None:
+        args.lr_decay_steps = total_steps
+    scheduler = CineBrainLR(optimiser, args.lr_decay_steps, args.lr_decay_style, args.lr_warmup,
+                            args.lr_decay_ratio, args.lr_auto_warmup_steps, args.lr_auto_warmup_rate)
     step, first_epoch = 0, 0
     if resumed:
         optimiser.load_state_dict(resumed['optimiser'])
         step, first_epoch = resumed['step'], resumed['epoch']
+        scheduler.load_state_dict(resumed['scheduler'])
         if rank == 0:
             log('Restoring weights and optimiser; the saved epoch restarts with a fresh data order.', 'WARN')
-    dataset, loader, sampler = make_loader(args, True, rank, world)
+    if rank == 0:
+        log(f"Learning-rate schedule: {args.lr_decay_style}, {args.lr_decay_steps} updates, warm-up {args.lr_warmup:.1%}.")
     run = create_run(args, stage, rank, world)
     writer = SummaryWriter(str(run / 'logs')) if rank == 0 else None
     if rank == 0:
@@ -149,12 +172,14 @@ def main(stage: str) -> None:
                     loss.backward()
                 if synchronise:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm, error_if_nonfinite = True)
+                    learning_rate = optimiser.param_groups[0]['lr']
                     optimiser.step()
+                    scheduler.step()
                     optimiser.zero_grad(set_to_none = True)
                     step += 1
                     if rank == 0:
                         writer.add_scalar('train/loss', output['loss'].item(), step)
-                        writer.add_scalar('train/lr', optimiser.param_groups[0]['lr'], step)
+                        writer.add_scalar('train/lr', learning_rate, step)
                         if stage == 'align':
                             for key in ('visual_loss', 'text_loss'):
                                 writer.add_scalar(f'train/{key}', output[key].item(), step)
@@ -163,13 +188,13 @@ def main(stage: str) -> None:
                         if step % args.save_every == 0:
                             atomic_checkpoint(run / 'checkpoints' / f'step_{step:07d}.pt', {
                                 'stage': stage, 'encoder_config': asdict(config), 'arguments': vars(args),
-                                'model': model_state(model, stage), 'optimiser': optimiser.state_dict(),
+                                'model': model_state(model, stage), 'optimiser': optimiser.state_dict(), 'scheduler': scheduler.state_dict(),
                                 'step': step, 'epoch': epoch})
             if args.max_steps is not None and step >= args.max_steps:
                 break
         if rank == 0:
             atomic_checkpoint(run / 'checkpoints' / 'last.pt', {'stage': stage, 'encoder_config': asdict(config),
-                'arguments': vars(args), 'model': model_state(model, stage), 'optimiser': optimiser.state_dict(),
+                'arguments': vars(args), 'model': model_state(model, stage), 'optimiser': optimiser.state_dict(), 'scheduler': scheduler.state_dict(),
                 'step': step, 'epoch': last_epoch + 1})
             log(f'{stage} complete at step {step}.', 'OK')
     finally:

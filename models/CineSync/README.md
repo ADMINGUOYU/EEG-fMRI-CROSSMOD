@@ -53,7 +53,7 @@ bash models/CineSync/models/CineSync_fMRI/bash_scrips/eval_align.sh
 bash models/CineSync/models/CineSync_fMRI/bash_scrips/eval_recon.sh
 ```
 
-Set `NPROC=1` in the reconstruction launcher for one GPU. Python entry points also expose argparse for programmatic use and `--help`; Bash passes the configured values explicitly. `bash_scrips` is not a Python package.
+Set `GPU_DEVICES="1,3,5,7"` and `NPROC=4` in the reconstruction launcher to select four GPUs. All training and evaluation launchers use `DEVICE_TYPE="cuda"` and export `CUDA_VISIBLE_DEVICES` from `GPU_DEVICES`; local ranks follow that list. For one GPU, set `GPU_DEVICES="2"` (and `NPROC=1` for reconstruction). Alignment and evaluation use one GPU. Python entry points also expose argparse for programmatic use and `--help`; Bash passes the configured values explicitly. `bash_scrips` is not a Python package.
 
 All pretrained model identifiers can be replaced by local directories. Configure `CACHE_DIR`, `HF_ENDPOINT` and `LOCAL_FILES_ONLY` in the launcher. 
 
@@ -87,3 +87,13 @@ Reconstruction evaluation supports:
 - FVD from a **user-supplied feature-only TorchScript I3D**. Configure `I3D_TORCHSCRIPT`; the module must accept RGB `(N,3,T,224,224)` in `[-1,1]` and return pre-classification `(N,D)` features. No unrelated features are labelled as FVD. Without this file, the report explicitly omits FVD.
 
 Evaluation uses the database's indexed video clips for GT `SAVE_ARRAYS=true` additionally preserves float reconstructions for exact later scoring. Semantic metric models and their cache locations are configurable.
+
+## Learning-rate scheduling
+
+Both training launchers expose `LR_DECAY_STYLE`, `LR_DECAY_STEPS`, `LR_WARMUP`, `LR_DECAY_RATIO`, `LR_AUTO_WARMUP_STEPS` and `LR_AUTO_WARMUP_RATE`. The decay horizon is inferred from epochs, loader length, gradient accumulation and `MAX_STEPS` unless specified explicitly. Scheduling advances once per optimiser update;
+
+These defaults follow the released [SAT arguments](https://github.com/yanweifu-sii/CineBrain/blob/main/sat/arguments.py) and [learning-rate scheduler](https://github.com/yanweifu-sii/CineBrain/blob/main/sat/training/learning_rates.py):
+
+1% linear warm-up, linear decay, and an initial fine-tuning cap of 5% of the base learning rate for 100 updates. Set `LR_AUTO_WARMUP_STEPS=0` to disable the cap. Cosine decay uses `LR_DECAY_RATIO` as its minimum multiplier; constant keeps the base rate after warm-up. As in SAT, decay uses the full horizon after warm-up, so its endpoint is reached at warm-up plus the configured horizon. Linear decay is clamped at zero if training continues beyond that endpoint. Zero warm-up is supported without division by zero.
+
+The repository's references is absent (`sft_5b_brain_va_clip_sub05.yaml`)
