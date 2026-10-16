@@ -1,0 +1,6 @@
+# Additional dependencies on top of the project's environment.yml.
+# install with pip install -r requirements.txt (AFTER cd to this directory)
+# check if you already have the dependencies by command: pip list | grep <package_name>
+# if you wish to uninstall a package, use command: pip uninstall <package_name>
+diffusers==0.35.2
+sentencepiece>=0.2
