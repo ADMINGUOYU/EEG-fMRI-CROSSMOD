@@ -150,15 +150,19 @@ class Dataset_CineSync(Dataset):
         return sample
 
     def process_sample(self, sample: dict[str, Any], trial_idx: int | None = None) -> dict[str, Any]:
-        # cached text represents the full caption, so never augment it after encoding
-        if self.embeddings:
-            row = self._embedding_rows[trial_idx]
-            sample['embeddings'] = {name: value[row].copy() for name, value in self.embeddings.items()}
-        elif self.augment_captions:
+        # sample the same adjacent sentence pairs with or without cached embeddings
+        selection = 0
+        if self.augment_captions:
             sentences = sample['caption'].split('.')
             if len(sentences) >= 2:
                 start = random.randrange(len(sentences) - 1)
                 sample['caption'] = '.'.join(sentences[start:start + 2]) + '.'
+                selection = start + 1
+        if self.embeddings:
+            row = self._embedding_rows[trial_idx]
+            text_row = int(self.embeddings['textual_offsets'][row]) + selection
+            sample['embeddings'] = {'visual': self.embeddings['visual'][row].copy(),
+                                    'textual': self.embeddings['textual'][text_row].copy()}
         return sample
 
     def __getitem__(self, index: int) -> dict[str, Any]:
@@ -229,24 +233,39 @@ class Dataset_CineSync(Dataset):
         path = self._embedding_cache_path(base_path)
         path.parent.mkdir(parents = True, exist_ok = True)
         indices = list(self.trial_indices)
-        cached = {'trial_indices': np.asarray(indices, dtype = np.int64)}
+        # count full captions plus every adjacent pair before allocating contiguous arrays
+        self._ensure_database()
+        captions = [self.captions[self._validate_trial(self.db.get_db_attribute(f'meta.trial_{index}'))]
+                    for index in indices]
+        offsets = np.concatenate(([0], np.cumsum([len(caption.split('.')) for caption in captions], dtype = np.int64)))
+        cached = {'trial_indices': np.asarray(indices, dtype = np.int64), 'textual_offsets': offsets}
         modalities = self.modalities
         temporary = None
+        print(f"\033[1;34m[CineSync] INFO\033[0m: Encoding {len(indices)} full captions and {int(offsets[-1]) - len(indices)} adjacent sentence pairs.")
         try:
-            # load videos and full captions directly, bypassing augmentation and sample preloading
+            # decode each trial once; preserve empty split fragments to match CineBrain
             self.modalities = ('video',)
             with torch.inference_mode():
-                for start in range(0, len(indices), batch_size):
-                    samples = [self.load_trial(index) for index in indices[start:start + batch_size]]
-                    visual, textual = encoder([s['data']['video'] for s in samples], [s['caption'] for s in samples])
-                    for name, value in (('visual', visual), ('textual', textual)):
-                        array = value.detach().float().cpu().numpy()
-                        if array.ndim < 2 or array.shape[0] != len(samples):
-                            raise ValueError(f"Invalid '{name}' embedding batch shape: {array.shape}.")
+                for row, index in enumerate(indices):
+                    sample = self.load_trial(index)
+                    sentences = captions[row].split('.')
+                    selections = [captions[row]] + ['.'.join(sentences[i:i + 2]) + '.' for i in range(len(sentences) - 1)]
+                    for start in range(0, len(selections), batch_size):
+                        texts = selections[start:start + batch_size]
+                        # the existing callback encodes both modalities; retain visuals only once
+                        visual, textual = encoder([sample['data']['video']] * len(texts), texts)
+                        visual = visual.detach().float().cpu().numpy()
+                        textual = textual.detach().float().cpu().numpy()
+                        if visual.ndim != 3 or textual.ndim != 2 or visual.shape[0] != len(texts) or textual.shape[0] != len(texts):
+                            raise ValueError('Invalid visual or textual embedding batch shape.')
+                        if row == 0 and start == 0:
+                            cached['visual'] = np.empty((len(indices), *visual.shape[1:]), dtype = visual.dtype)
+                            cached['textual'] = np.empty((int(offsets[-1]), textual.shape[1]), dtype = textual.dtype)
                         if start == 0:
-                            cached[name] = np.empty((len(indices), *array.shape[1:]), dtype = array.dtype)
-                        cached[name][start:start + len(samples)] = array
-                    print(f"\033[1;34m[CineSync] INFO\033[0m: Cached embeddings for {start + len(samples)}/{len(indices)} trials.", flush = True)
+                            cached['visual'][row] = visual[0]
+                        text_start = int(offsets[row]) + start
+                        cached['textual'][text_start:text_start + len(texts)] = textual
+                    print(f"\033[1;34m[CineSync] INFO\033[0m: Cached embeddings for {row + 1}/{len(indices)} trials.", flush = True)
             # publish the complete pickle atomically after all selected trials are encoded
             with tempfile.NamedTemporaryFile(dir = path.parent, suffix = '.tmp', delete = False) as stream:
                 temporary = Path(stream.name)
@@ -270,11 +289,16 @@ class Dataset_CineSync(Dataset):
                 cached = pickle.load(stream)
             if not np.array_equal(cached['trial_indices'], self.trial_indices):
                 raise ValueError('Cached trial indices do not match the current selection.')
-            for name in ('visual', 'textual'):
+            offsets = cached['textual_offsets']
+            if (not isinstance(offsets, np.ndarray) or offsets.shape != (len(self) + 1,)
+                    or not np.issubdtype(offsets.dtype, np.integer) or offsets[0] != 0
+                    or np.any(np.diff(offsets) < 1)):
+                raise ValueError('Invalid textual embedding offsets.')
+            for name, count, dimensions in (('visual', len(self), 3), ('textual', int(offsets[-1]), 2)):
                 value = cached[name]
-                if not isinstance(value, np.ndarray) or value.ndim < 2 or value.shape[0] != len(self):
+                if not isinstance(value, np.ndarray) or value.ndim != dimensions or value.shape[0] != count:
                     raise ValueError(f"Invalid '{name}' embedding matrix.")
-            self.embeddings = {name: cached[name] for name in ('visual', 'textual')}
+            self.embeddings = {name: cached[name] for name in ('visual', 'textual', 'textual_offsets')}
             self._embedding_rows = {index: row for row, index in enumerate(self.trial_indices)}
         except FileNotFoundError:
             print(f"\033[1;34m[CineSync] INFO\033[0m: No embedding cache at '{path}'.")
