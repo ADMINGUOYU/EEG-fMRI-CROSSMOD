@@ -7,14 +7,9 @@ import sys
 import time
 from typing import List, Optional, Sequence
 
-# try importing, as this dependency may not be installed with environment setup
-try:
-    from huggingface_hub import HfApi, snapshot_download
-except ImportError as e:
-    raise ImportError(
-        "The 'huggingface_hub' library is required to use this script. "
-        "Please install it using 'pip install huggingface_hub'."
-    ) from e
+# NOTE:
+# imports of huggingface_hub are done inside the class to
+# ensure environment variables are set before import
 
 from requests.exceptions import RequestException
 
@@ -34,13 +29,32 @@ class HF_REPO:
         self.repo_type = repo_type
         self.hf_endpoint = hf_endpoint or os.environ.get("HF_ENDPOINT", "https://huggingface.co")
         self.hf_home = hf_home or os.environ.get("HF_HOME", os.path.join(os.getcwd(), "cache", "hf_cache"))
-        self.api = HfApi(endpoint = self.hf_endpoint)
 
         # Recommended environment settings
         os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
         os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"  # Increased timeout for large files
         os.environ["HF_ENDPOINT"] = self.hf_endpoint
         os.environ["HF_HOME"] = self.hf_home
+
+        # if HF_ENDPOINT is not official, set HF_HUB_DISABLE_XET to 1
+        if self.hf_endpoint != "https://huggingface.co":
+            os.environ["HF_HUB_DISABLE_XET"] = "1"
+
+        # try importing, as this dependency may not be installed with environment setup
+        # NOTE: import after setting environment variables to ensure correct behaviour
+        try:
+            from huggingface_hub import HfApi, snapshot_download
+        except ImportError as e:
+            raise ImportError(
+                "The 'huggingface_hub' library is required to use this script. "
+                "Please install it using 'pip install huggingface_hub'."
+            ) from e
+
+        # Initialize the HfApi instance (do this after importing)
+        self.api = HfApi(endpoint = self.hf_endpoint)
+
+        # save the snapshot_download function for later use
+        self.snapshot_download = snapshot_download
 
     def get_file_tree(self) -> List[str]:
         try:
@@ -70,11 +84,11 @@ class HF_REPO:
         effective_ignore_patterns = list(ignore_patterns) if ignore_patterns is not None else None
         effective_keep_patterns = list(keep_patterns) if keep_patterns is not None else None
 
-        print(f"\033[1;34m[HF_REPO] INFO\033[0m: Starting download for {self.repo_id} ({self.repo_type}) to {target_path}")
+        print(f"\033[1;34m[HF_REPO] INFO\033[0m: Starting to download {self.repo_id} ({self.repo_type}) to {target_path}")
 
         for attempt in range(max_retries):
             try:
-                snapshot_download(
+                self.snapshot_download(
                     repo_id = self.repo_id,
                     revision = self.revision,
                     repo_type = self.repo_type,
