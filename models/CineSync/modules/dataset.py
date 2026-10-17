@@ -237,35 +237,49 @@ class Dataset_CineSync(Dataset):
         self._ensure_database()
         captions = [self.captions[self._validate_trial(self.db.get_db_attribute(f'meta.trial_{index}'))]
                     for index in indices]
-        offsets = np.concatenate(([0], np.cumsum([len(caption.split('.')) for caption in captions], dtype = np.int64)))
+        # map each flat textual row to a trial; preserve upstream's empty split fragments
+        selections: list[str] = []
+        offsets = [0]
+        for caption in captions:
+            sentences = caption.split('.')
+            selections.append(caption)
+            selections.extend('.'.join(sentences[i:i + 2]) + '.' for i in range(len(sentences) - 1))
+            offsets.append(len(selections))
+        offsets = np.asarray(offsets, dtype = np.int64)
+        trial_rows = np.repeat(np.arange(len(indices)), np.diff(offsets))
         cached = {'trial_indices': np.asarray(indices, dtype = np.int64), 'textual_offsets': offsets}
         modalities = self.modalities
         temporary = None
         print(f"\033[1;34m[CineSync] INFO\033[0m: Encoding {len(indices)} full captions and {int(offsets[-1]) - len(indices)} adjacent sentence pairs.")
         try:
-            # decode each trial once; preserve empty split fragments to match CineBrain
+            # batch mapped selections across trials, retaining only the current batch's videos
             self.modalities = ('video',)
+            previous_row, video = -1, None
             with torch.inference_mode():
-                for row, index in enumerate(indices):
-                    sample = self.load_trial(index)
-                    sentences = captions[row].split('.')
-                    selections = [captions[row]] + ['.'.join(sentences[i:i + 2]) + '.' for i in range(len(sentences) - 1)]
-                    for start in range(0, len(selections), batch_size):
-                        texts = selections[start:start + batch_size]
-                        # the existing callback encodes both modalities; retain visuals only once
-                        visual, textual = encoder([sample['data']['video']] * len(texts), texts)
-                        visual = visual.detach().float().cpu().numpy()
-                        textual = textual.detach().float().cpu().numpy()
-                        if visual.ndim != 3 or textual.ndim != 2 or visual.shape[0] != len(texts) or textual.shape[0] != len(texts):
-                            raise ValueError('Invalid visual or textual embedding batch shape.')
-                        if row == 0 and start == 0:
-                            cached['visual'] = np.empty((len(indices), *visual.shape[1:]), dtype = visual.dtype)
-                            cached['textual'] = np.empty((int(offsets[-1]), textual.shape[1]), dtype = textual.dtype)
-                        if start == 0:
-                            cached['visual'][row] = visual[0]
-                        text_start = int(offsets[row]) + start
-                        cached['textual'][text_start:text_start + len(texts)] = textual
-                    print(f"\033[1;34m[CineSync] INFO\033[0m: Cached embeddings for {row + 1}/{len(indices)} trials.", flush = True)
+                for start in range(0, len(selections), batch_size):
+                    stop = min(start + batch_size, len(selections))
+                    videos = []
+                    for row in trial_rows[start:stop]:
+                        # mappings are ordered, so even a trial crossing batches is decoded once
+                        if row != previous_row:
+                            video = self.load_trial(indices[row])['data']['video']
+                            previous_row = row
+                        videos.append(video)
+                    visual, textual = encoder(videos, selections[start:stop])
+                    visual = visual.detach().float().cpu().numpy()
+                    textual = textual.detach().float().cpu().numpy()
+                    if visual.ndim != 3 or textual.ndim != 2 or visual.shape[0] != stop - start or textual.shape[0] != stop - start:
+                        raise ValueError('Invalid visual or textual embedding batch shape.')
+                    if start == 0:
+                        cached['visual'] = np.empty((len(indices), *visual.shape[1:]), dtype = visual.dtype)
+                        cached['textual'] = np.empty((len(selections), textual.shape[1]), dtype = textual.dtype)
+                    cached['textual'][start:stop] = textual
+                    # store the visual result only at each trial's first mapped selection
+                    for position, row in enumerate(trial_rows[start:stop]):
+                        if start + position == offsets[row]:
+                            cached['visual'][row] = visual[position]
+                    print(f"\033[1;34m[CineSync] INFO\033[0m: Cached {stop}/{len(selections)} selections ({100 * stop / len(selections):.1f}%).", flush = True)
+                    del videos
             # publish the complete pickle atomically after all selected trials are encoded
             with tempfile.NamedTemporaryFile(dir = path.parent, suffix = '.tmp', delete = False) as stream:
                 temporary = Path(stream.name)
@@ -273,6 +287,7 @@ class Dataset_CineSync(Dataset):
             temporary.replace(path)
             print(f"\033[1;32m[CineSync] OK\033[0m: Saved embeddings to '{path}'.")
         finally:
+            # revert to original settings and copy over the cache
             self.modalities = modalities
             if temporary is not None:
                 temporary.unlink(missing_ok = True)
