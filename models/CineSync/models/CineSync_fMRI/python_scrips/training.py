@@ -3,15 +3,18 @@
 from __future__ import annotations
 import argparse
 import json
+from time import monotonic
 import math
 from contextlib import nullcontext
 from dataclasses import asdict
+from functools import partial
+from pathlib import Path
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.tensorboard import SummaryWriter
 from ....modules.runtime import (add_common_arguments, configure_huggingface, setup_device,
-    create_run, make_loader, log, atomic_checkpoint, model_state, restore_model, load_checkpoint)
+    create_run, make_loader, log, progress_text, atomic_checkpoint, model_state, restore_model, load_checkpoint)
 from ....modules.encoders.fmri import FMRIConfig
 from ....modules.scheduling import CineBrainLR
 from ..align import CineSyncFMRIAlign
@@ -95,12 +98,8 @@ def main(stage: str) -> None:
         if rank == 0:
             log(f"Stage two inherits subject {args.subject_id} and ROI '{args.fmri_roi}' from alignment.")
     aligned_model = CineSyncFMRIAlign(config, normalise = getattr(args, 'normalise_contrastive', False))
-    teacher = None
     if stage == 'align':
-        from ....modules.encoders.semantic import SemanticEncoder
         model = aligned_model
-        teacher = SemanticEncoder(args.siglip_model, args.cache_dir, args.local_files_only,
-                                  args.teacher_frame_batch_size).to(device)
     else:
         # NOTE: reconstruction (stage 2)
         from ..recon import CineSyncFMRIRecon
@@ -116,7 +115,23 @@ def main(stage: str) -> None:
         restore_model(model, resumed)
     optimiser = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr = args.lr,
                                  betas = (0.9, 0.95), weight_decay = args.weight_decay)
-    dataset, loader, sampler = make_loader(args, True, rank, world)
+    dataset, loader, sampler = make_loader(args, True, rank, world,
+                                           modalities = ('fmri',) if stage == 'align' else ('fmri', 'video'))
+    if stage == 'align':
+        # prepare embeddings before workers start; a cache hit never loads the teacher
+        cache_path = Path(args.results_root) / 'CineSync'
+        if not dataset.load_cache_embeddings(cache_path):
+            from ....modules.encoders.semantic import SemanticEncoder
+            teacher = SemanticEncoder(args.siglip_model, args.cache_dir, args.local_files_only,
+                                      args.teacher_frame_batch_size).to(device)
+            try:
+                dataset.generate_cache_embeddings(cache_path, partial(teacher, device = device), args.batch_size)
+            finally:
+                del teacher
+                if device.type == 'cuda':
+                    torch.cuda.empty_cache()
+            if not dataset.load_cache_embeddings(cache_path):
+                raise RuntimeError('Cannot load the generated embedding cache.')
     # schedule optimiser updates, accounting for the final partial accumulation group
     total_steps = args.epochs * math.ceil(len(loader) / args.gradient_accumulation)
     if args.max_steps is not None:
@@ -143,6 +158,14 @@ def main(stage: str) -> None:
     model.train()
     optimiser.zero_grad(set_to_none = True)
     last_epoch = first_epoch
+    # include restarted epochs in the progress target, but time only newly completed updates
+    initial_step = step
+    progress_steps = step + max(0, args.epochs - first_epoch) * math.ceil(len(loader) / args.gradient_accumulation)
+    if args.max_steps is not None:
+        progress_steps = max(step, min(progress_steps, args.max_steps))
+    started = monotonic()
+    if rank == 0:
+        log(f'{stage}: steps {progress_text(step, progress_steps, started, initial_step)}.')
     try:
         for epoch in range(first_epoch, args.epochs):
             last_epoch = epoch
@@ -153,8 +176,8 @@ def main(stage: str) -> None:
                     break
                 fmri = batch['data']['fmri'].to(device, non_blocking = True)
                 if stage == 'align':
-                    with torch.no_grad():
-                        video_features, text_features = teacher(batch['data']['video'], batch['caption'], device)
+                    video_features = batch['embeddings']['visual'].to(device, non_blocking = True)
+                    text_features = batch['embeddings']['textual'].to(device, non_blocking = True)
                 else:
                     # NOTE: reconstruction (stage 2)
                     from ....modules.encoders.video import prepare_video
@@ -183,8 +206,9 @@ def main(stage: str) -> None:
                         if stage == 'align':
                             for key in ('visual_loss', 'text_loss'):
                                 writer.add_scalar(f'train/{key}', output[key].item(), step)
-                        if step == 1 or step % 10 == 0:
-                            log(f'{stage}: epoch {epoch + 1}, step {step}, loss {output["loss"].item():.6f}.')
+                        if step == initial_step + 1 or step % 10 == 0 or step == progress_steps:
+                            log(f'{stage}: epoch {epoch + 1}, steps {progress_text(step, progress_steps, started, initial_step)}, '
+                                f'loss {output["loss"].item():.6f}.')
                         if step % args.save_every == 0:
                             atomic_checkpoint(run / 'checkpoints' / f'step_{step:07d}.pt', {
                                 'stage': stage, 'encoder_config': asdict(config), 'arguments': vars(args),

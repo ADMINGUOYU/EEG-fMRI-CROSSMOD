@@ -3,11 +3,12 @@
 from __future__ import annotations
 import argparse
 import json
+from time import monotonic
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from ....modules.runtime import (add_common_arguments, configure_huggingface, setup_device,
-    make_loader, create_run, load_checkpoint, restore_model, log)
+    make_loader, create_run, load_checkpoint, restore_model, log, progress_text)
 from ....modules.encoders.fmri import FMRIConfig, FMRIEncoder
 from ....modules.encoders.video import prepare_video, save_video
 from ....modules.evaluation.metrics import pixel_metrics, n_way_accuracy, temporal_consistency, frechet_distance
@@ -61,6 +62,9 @@ def main() -> None:
     count, ids = 0, []
     pred_i3d, gt_i3d = [], []
     generator = torch.Generator(device = device).manual_seed(args.seed)
+    # estimate trial-processing time; final aggregate metrics are reported separately
+    started = monotonic()
+    log(f'Reconstruction evaluation: trials {progress_text(count, len(dataset), started)}.')
     try:
         with torch.inference_mode():
             for batch in loader:
@@ -86,7 +90,8 @@ def main() -> None:
                         np.save(run / 'videos' / f'{name}.npy', generated[i].cpu().numpy())
                 count += len(fmri)
                 ids.extend(batch['clip_id'].tolist())
-                log(f'Reconstructed {count}/{len(dataset)} trials.')
+                log(f'Reconstruction evaluation: trials {progress_text(count, len(dataset), started)}.')
+        log('Calculating aggregate reconstruction metrics.')
         scores = {key: value / count for key, value in totals.items()}
         if extractor:
             p = {key: torch.cat([item[key] for item in predicted]) for key in predicted[0]}

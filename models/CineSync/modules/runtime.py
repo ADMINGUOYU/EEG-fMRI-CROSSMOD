@@ -7,6 +7,7 @@ import json
 import os
 import random
 import shutil
+from time import monotonic
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -114,11 +115,12 @@ def configure_huggingface(args: argparse.Namespace) -> None:
         os.environ['HF_ENDPOINT'] = args.hf_endpoint
 
 
-def make_loader(args: argparse.Namespace, training: bool, rank: int = 0, world: int = 1):
+def make_loader(args: argparse.Namespace, training: bool, rank: int = 0, world: int = 1,
+                modalities: tuple[str, ...] = ('fmri', 'video')):
     from torch.utils.data import DataLoader, DistributedSampler
     from .dataset import Dataset_CineSync
     dataset = Dataset_CineSync(args.db_path, args.captions_path, subject_id = args.subject_id,
-                              phase = args.phase, fmri_roi = args.fmri_roi,
+                              phase = args.phase, fmri_roi = args.fmri_roi, modalities = modalities,
                               augment_captions = training, return_meta = False)
     if args.max_samples is not None:
         dataset.trial_indices = dataset.trial_indices[:args.max_samples]
@@ -133,3 +135,19 @@ def make_loader(args: argparse.Namespace, training: bool, rank: int = 0, world: 
         dataset.close()
         raise ValueError('No batches remain; check subject/phase selection and batch size.')
     return dataset, loader, sampler
+
+# added progress printing assistant
+def progress_text(completed: int, total: int, started: float, initial: int = 0) -> str:
+    # estimate remaining loop time using only work completed in this invocation
+    processed = completed - initial
+    percentage = 100 * completed / total if total > 0 else 100.0
+    remaining = max(0, total - completed)
+    if remaining == 0:
+        eta = '0m 00s'
+    elif processed > 0:
+        seconds = round((monotonic() - started) / processed * remaining)
+        minutes, seconds = divmod(seconds, 60)
+        eta = f'{minutes}m {seconds:02d}s'
+    else:
+        eta = 'estimating'
+    return f'{completed}/{total} ({percentage:.1f}%), estimated remaining {eta}'

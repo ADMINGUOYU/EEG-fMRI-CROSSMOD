@@ -3,10 +3,13 @@
 from __future__ import annotations
 import argparse
 import json
+from time import monotonic
+from functools import partial
+from pathlib import Path
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from ....modules.runtime import (add_common_arguments, configure_huggingface, setup_device,
-    make_loader, create_run, load_checkpoint, restore_model, log)
+    make_loader, create_run, load_checkpoint, restore_model, log, progress_text)
 from ....modules.encoders.fmri import FMRIConfig
 from ....modules.evaluation.metrics import retrieval_metrics
 from ..align import CineSyncFMRIAlign
@@ -20,7 +23,6 @@ def main() -> None:
     parser.add_argument('--siglip-model', default = None, help = 'Optional offline path override for the saved teacher.')
     args = parser.parse_args()
     configure_huggingface(args)
-    from ....modules.encoders.semantic import SemanticEncoder
     device, rank, world = setup_device(args)
     if world != 1:
         raise ValueError('Evaluation uses one process to avoid duplicate gallery entries.')
@@ -31,18 +33,39 @@ def main() -> None:
     model = CineSyncFMRIAlign(FMRIConfig(**saved['encoder_config']), saved['arguments']['normalise_contrastive']).to(device)
     restore_model(model, saved)
     model.eval()
-    teacher = SemanticEncoder(args.siglip_model or saved['arguments']['siglip_model'], args.cache_dir, args.local_files_only).to(device)
-    dataset, loader, _ = make_loader(args, False)
+    dataset, loader, _ = make_loader(args, False, modalities = ('fmri',))
+    # reuse the selected gallery's embeddings before starting DataLoader workers
+    cache_path = Path(args.results_root) / 'CineSync'
+    if not dataset.load_cache_embeddings(cache_path):
+        from ....modules.encoders.semantic import SemanticEncoder
+        teacher = SemanticEncoder(args.siglip_model or saved['arguments']['siglip_model'],
+                                  args.cache_dir, args.local_files_only).to(device)
+        try:
+            dataset.generate_cache_embeddings(cache_path, partial(teacher, device = device), args.batch_size)
+        finally:
+            del teacher
+            if device.type == 'cuda':
+                torch.cuda.empty_cache()
+        if not dataset.load_cache_embeddings(cache_path):
+            raise RuntimeError('Cannot load the generated embedding cache.')
     run = create_run(args, 'eval_align')
     features = {key: [] for key in ('brain', 'video', 'text', 'clip_id')}
+    count = 0
+    # time selected-trial processing separately from cache preparation and final metrics
+    started = monotonic()
+    log(f'Alignment evaluation: trials {progress_text(count, len(dataset), started)}.')
     try:
         with torch.inference_mode():
             for batch in loader:
-                visual, textual = teacher(batch['data']['video'], batch['caption'], device)
+                visual = batch['embeddings']['visual'].to(device, non_blocking = True)
+                textual = batch['embeddings']['textual'].to(device, non_blocking = True)
                 output = model(batch['data']['fmri'].to(device), visual, textual)
                 for key in ('brain', 'video', 'text'):
                     features[key].append(output[key].cpu())
                 features['clip_id'].append(batch['clip_id'])
+                count += len(batch['clip_id'])
+                log(f'Alignment evaluation: trials {progress_text(count, len(dataset), started)}.')
+        log('Calculating retrieval metrics for the complete gallery.')
         features = {key: torch.cat(value) for key, value in features.items()}
         scores = {}
         for key in ('video', 'text'):
