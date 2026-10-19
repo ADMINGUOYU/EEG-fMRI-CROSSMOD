@@ -70,7 +70,8 @@ if __name__ == "__main__":
         if file.endswith(".tar"):
             print(f"\033[1;34m[INFO]\033[0m: Extracting {filepath_absolute}.")
             try:
-                subprocess.run(["tar", "-xf", filepath_absolute, "-C", decompress_path_absolute], check = True)
+                # add "--no-same-owner" flag as some systems might encounter permission issues
+                subprocess.run(["tar", "-xf", filepath_absolute, "--no-same-owner", "-C", decompress_path_absolute], check = True)
             except subprocess.CalledProcessError as e:
                 print(f"\033[1;31m[ERROR]\033[0m: Failed to extract {filepath_absolute}. Error: {e}")
 # [ERROR TERMINATION]
