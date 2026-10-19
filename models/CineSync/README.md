@@ -33,6 +33,9 @@ Before loading, a selected trial must indicate five fMRI frames or a four-second
 
 Video paths are read directly from the indexed database entries. The base dataset's selections are respected; no automatic split is invented. Defaults train subject 1 using the database's `train` split and evaluate its `test` split. To reproduce per-subject results, run each subject separately. Stage two inherits its subject, ROI and encoder architecture from stage one's checkpoint.
 
+> [!NOTE]
+> `models/CineSync/modules/dataset_offDB.py` is an additional standalone dataset that reads the supplied signals and original clips. To use it, amend imports in `./models/CineSync/modules/runtime.py`. (This does NOT rely on our lmdb backed dataset framework.)
+
 ## Installation and launch
 
 Activate the project's environment, then install the small additional dependency
