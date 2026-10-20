@@ -14,6 +14,7 @@ SUBJECT_ID=1
 FMRI_ROI="visual"
 DEVICE_TYPE="cuda"    # device type only; select GPU indices or UUIDs below
 GPU_DEVICES="0,1,2,3" # one GPU per process, in local-rank order
+NPROC=4               # number of processes to launch; must match the number of GPUs above
 WORKERS=4
 SEED=42
 MAX_SAMPLES="" # empty selects the whole split
@@ -41,7 +42,6 @@ LORA_ALPHA=64
 CONDITION_DROPOUT=0.1
 HEIGHT=480
 WIDTH=720
-NPROC=4
 # =======================================
 
 # Require the project root as the working directory; do not change it silently.
