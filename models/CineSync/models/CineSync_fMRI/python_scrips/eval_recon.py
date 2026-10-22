@@ -24,8 +24,9 @@ def main() -> None:
     parser.add_argument('--steps', type = int, default = 50)
     parser.add_argument('--guidance-scale', type = float, default = 6)
     parser.add_argument('--semantic-metrics', action = argparse.BooleanOptionalAction, default = True)
-    parser.add_argument('--clip-model', default = 'openai/clip-vit-base-patch32')
+    parser.add_argument('--clip-model', default = 'laion/CLIP-ViT-H-14-laion2B-s32B-b79K')
     parser.add_argument('--dino-model', default = 'facebook/dinov2-base')
+    parser.add_argument('--image-metric-model', default = 'google/vit-base-patch16-224')
     parser.add_argument('--video-metric-model', default = 'MCG-NJU/videomae-base-finetuned-kinetics')
     parser.add_argument('--i3d-torchscript', default = None, help = 'Feature-only I3D TorchScript; required to report FVD.')
     parser.add_argument('--save-arrays', action = 'store_true', help = 'Save float reconstruction arrays for exact later evaluation.')
@@ -50,7 +51,8 @@ def main() -> None:
     if args.semantic_metrics:
         from ....modules.evaluation.features import EvaluationFeatures
         extractor = EvaluationFeatures(args.clip_model, args.dino_model, args.video_metric_model,
-                                       args.cache_dir, args.local_files_only).to(device)
+                                       args.image_metric_model, args.cache_dir, args.local_files_only).to(device)
+        log('N-way classification reports standard GT top-one scores and CineBrain issue #3 GT top-three scores.')
     if args.i3d_torchscript:
         from ....modules.evaluation.features import I3DFeatures
         i3d = I3DFeatures(args.i3d_torchscript).to(device)
@@ -96,16 +98,16 @@ def main() -> None:
         if extractor:
             p = {key: torch.cat([item[key] for item in predicted]) for key in predicted[0]}
             g = {key: torch.cat([item[key] for item in targets]) for key in targets[0]}
-            # select one prediction per stimulus for the N-way gallery; preserve trial-level pixel scores
-            unique = list(dict.fromkeys(ids))
-            indices = [ids.index(clip_id) for clip_id in unique]
+            # classify each trial independently; negatives are classes, not other clips
             for n in (2, 50):
-                if len(indices) >= n:
-                    scores[f'video_{n}way'] = n_way_accuracy(p['video'][indices], g['video'][indices], n, seed = args.seed)
-                    scores[f'frame_{n}way'] = float(np.mean([n_way_accuracy(p['clip'][indices, frame], g['clip'][indices, frame], n,
-                                                                                         seed = args.seed + frame) for frame in range(33)]))
-                else:
-                    log(f'{n}-way identification omitted: only {len(indices)} unique stimuli were evaluated.', 'WARN')
+                # calculate both top-1 and top-3
+                for gt_top_k, suffix in ((1, ''), (3, '_gt_top3')):
+                    scores[f'video_{n}way{suffix}'] = n_way_accuracy(
+                        p['video_logits'], g['video_logits'], n, seed = args.seed, gt_top_k = gt_top_k)
+                    scores[f'frame_{n}way{suffix}'] = float(np.mean([
+                        n_way_accuracy(p['image_logits'][:, frame], g['image_logits'][:, frame],
+                                                      n, seed = args.seed + frame, gt_top_k = gt_top_k)
+                        for frame in range(p['image_logits'].shape[1])]))
             scores['dtc'] = temporal_consistency(p['dino'])
             scores['ctc'] = temporal_consistency(p['clip'])
             torch.save({'prediction': p, 'target': g, 'clip_ids': ids}, run / 'meta' / 'features.pt')

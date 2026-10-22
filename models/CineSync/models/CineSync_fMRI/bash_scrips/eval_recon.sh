@@ -24,8 +24,9 @@ COGVIDEO_MODEL="" # empty uses the base model recorded in the checkpoint
 STEPS=50
 GUIDANCE_SCALE=6
 SEMANTIC_METRICS=true
-CLIP_MODEL="openai/clip-vit-base-patch32"
+CLIP_MODEL="laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
 DINO_MODEL="facebook/dinov2-base"
+IMAGE_METRIC_MODEL="google/vit-base-patch16-224"
 VIDEO_METRIC_MODEL="MCG-NJU/videomae-base-finetuned-kinetics"
 I3D_TORCHSCRIPT="" # provide a validated feature-only checkpoint to report FVD
 SAVE_ARRAYS=false
@@ -62,7 +63,7 @@ if [[ "$LOCAL_FILES_ONLY" == true ]]; then ARGS+=(--local-files-only); fi
 if [[ -n "$MAX_SAMPLES" ]]; then ARGS+=(--max-samples "$MAX_SAMPLES"); fi
 ARGS+=(--checkpoint "$CHECKPOINT")
 ARGS+=(--steps "$STEPS" --guidance-scale "$GUIDANCE_SCALE" --clip-model "$CLIP_MODEL"
-       --dino-model "$DINO_MODEL" --video-metric-model "$VIDEO_METRIC_MODEL")
+       --dino-model "$DINO_MODEL" --image-metric-model "$IMAGE_METRIC_MODEL" --video-metric-model "$VIDEO_METRIC_MODEL")
 if [[ "$SEMANTIC_METRICS" == true ]]; then ARGS+=(--semantic-metrics); else ARGS+=(--no-semantic-metrics); fi
 if [[ "$SAVE_ARRAYS" == true ]]; then ARGS+=(--save-arrays); fi
 if [[ -n "$COGVIDEO_MODEL" ]]; then ARGS+=(--cogvideo-model "$COGVIDEO_MODEL"); fi

@@ -85,8 +85,8 @@ Alignment evaluation reports full-gallery cosine top-1/top-5 retrieval for brain
 Reconstruction evaluation supports:
 
 - Frame PSNR and SSIM on matched RGB frames in `[0,1]`, before saving a compressed reconstruction MP4. Identical frames use a finite PSNR cap of 120 dB.
-- Frame 2-way/50-way identification using configurable CLIP embeddings and video identification using configurable VideoMAE embeddings, 100 sampled distractor trials. At least N unique clips are required for an N-way score. A repeated clip contributes its first prediction to this gallery; pixel metrics retain all trials.
-- DTC and CTC defined here as mean adjacent-frame cosine similarity of DINOv2 and CLIP features, respectively. The default model IDs and definitions are recorded; exact comparability requires the authors' missing metric helper/checkpoints.
+- Frame/video 2-way and 50-way classification using `google/vit-base-patch16-224` / `MCG-NJU/videomae-base-finetuned-kinetics`, with 100 distractor draws per trial and all 33 frames. Both variants run: standard keys accept GT top-one; `_gt_top3` scores accept any GT top-three class, following [issue #3](https://github.com/yanweifu-sii/CineBrain/issues/3#issuecomment-5303089548).
+- DTC and CTC defined here as mean adjacent-frame cosine similarity of DINOv2 and CLIP features (CTC uses CLIP ViT-H/14 (`laion/CLIP-ViT-H-14-laion2B-s32B-b79K`)), respectively. The default model IDs and definitions are recorded; exact comparability requires the authors' missing metric helper/checkpoints.
 - FVD from a **user-supplied feature-only TorchScript I3D**. Configure `I3D_TORCHSCRIPT`; the module must accept RGB `(N,3,T,224,224)` in `[-1,1]` and return pre-classification `(N,D)` features. No unrelated features are labelled as FVD. Without this file, the report explicitly omits FVD.
 
 Evaluation uses the database's indexed video clips for GT `SAVE_ARRAYS=true` additionally preserves float reconstructions for exact later scoring. Semantic metric models and their cache locations are configurable.

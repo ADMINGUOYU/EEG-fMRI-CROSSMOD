@@ -1,6 +1,7 @@
 # file: metrics.py
 # libraries: numpy, torch, scipy, scikit-image
-# Explicit metric definitions: the release's models.eval_metrics helper is absent.
+# NOTE: Explicit metric definitions: the release's models.eval_metrics helper is absent.
+# NOTE: updated to reference CineBrain issue #3
 from __future__ import annotations
 import numpy as np
 import torch
@@ -39,19 +40,28 @@ def retrieval_metrics(prediction: torch.Tensor, target: torch.Tensor, clip_ids: 
 
 
 def n_way_accuracy(prediction: torch.Tensor, target: torch.Tensor, n_way: int,
-                   trials: int = 100, seed: int = 42) -> float:
-    # each query competes against n-1 distinct distractors from a unique-stimulus gallery
-    if len(target) < n_way or len(prediction) != len(target):
-        raise ValueError(f'{n_way}-way accuracy requires at least {n_way} matched stimuli.')
-    similarity = (F.normalize(prediction.float(), dim = -1) @ F.normalize(target.float(), dim = -1).T).cpu().numpy()
-    rng = np.random.default_rng(seed)
+                   trials: int = 100, seed: int = 42, gt_top_k: int = 1) -> float:
+    # BY DEFAULT: each query competes against n-1 distinct distractors from a unique-stimulus gallery
+    if prediction.shape != target.shape or prediction.ndim != 2 or len(prediction) == 0:
+        raise ValueError('Classification metrics require matching non-empty N,C logits.')
+    if not 2 <= n_way <= prediction.shape[1] - gt_top_k + 1 or trials < 1:
+        raise ValueError('N-way evaluation needs N-1 distractor classes outside the accepted GT classes.')
+    # softmax and sorting reproduce the reference, including its treatment of tied scores
+    probabilities = prediction.softmax(-1).cpu()
+    positives = target.argsort(-1, descending = False)[:, -gt_top_k:].cpu()
+    rng = np.random.RandomState(seed)
     correct = 0
-    for i in range(len(target)):
-        candidates = np.delete(np.arange(len(target)), i)
+    for pred, class_ids in zip(probabilities, positives):
+        candidates = np.setdiff1d(np.arange(prediction.shape[1]), class_ids.numpy())
         for _ in range(trials):
             distractors = rng.choice(candidates, n_way - 1, replace = False)
-            correct += similarity[i, i] > similarity[i, distractors].max()
-    return float(correct / (len(target) * trials))
+            # reuse one sampled negative set for all acceptable classes
+            for class_id in class_ids:
+                scores = torch.cat((pred[class_id].unsqueeze(0), pred[distractors]))
+                if scores.argsort(descending = False)[-1].item() == 0:
+                    correct += 1
+                    break
+    return correct / (len(prediction) * trials)
 
 
 def temporal_consistency(features: torch.Tensor) -> float:
