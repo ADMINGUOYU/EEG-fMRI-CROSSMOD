@@ -64,7 +64,9 @@ class I3DFeatures(nn.Module):
         super().__init__()
         # supply a trusted feature-only TorchScript I3D with forward(N,C,T,H,W) -> (N,D)
         self.model = torch.jit.load(path, map_location = 'cpu').eval()
-        self.model.requires_grad_(False)
+        # freeze parameters directly; TorchScript does not support module.requires_grad_
+        for parameter in self.model.parameters():
+            parameter.requires_grad_(False)
 
     @torch.no_grad()
     def forward(self, videos: torch.Tensor) -> torch.Tensor:
