@@ -369,6 +369,17 @@ if __name__ == '__main__':
             selected = sample_splits == split
             ax.scatter(*embedding[selected].T, s = 28, alpha = 0.65, c = colours[split],
                        marker = markers[split], label = f'{split} (n = {selected.sum()})', edgecolors = 'none')
+        # label each run at the centroids
+        # (NOTE: the centroids here is the average of the **selected** samples ONLY from the same run)
+        sampled_runs = np.array([plan[row]['run'] for row in sampled_rows])
+        for run in np.unique(sampled_runs):
+            selected = sampled_runs == run
+            centre = embedding[selected].mean(axis = 0)
+            colour = colours[sample_splits[selected][0]]
+            ax.scatter(*centre, marker = '+', s = 110, linewidths = 2, color = colour, zorder = 4)
+            ax.annotate(f'Run {run}', xy = centre, xytext = (5, 5), textcoords = 'offset points',
+                        fontsize = 8, color = colour, zorder = 5,
+                        bbox = {'facecolor': 'white', 'edgecolor': 'none', 'alpha': 0.75, 'pad': 1})
         ax.set(xlabel = f'PC1 ({explained[0]:.1%} fit variance)', ylabel = f'PC2 ({explained[1]:.1%} fit variance)',
                title = f'PCA sample · fitted on {PCA_FIT_SPLIT} only')
         ax.legend(frameon = False)
