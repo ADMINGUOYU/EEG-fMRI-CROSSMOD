@@ -42,6 +42,22 @@ def load_video(path: Path) -> torch.Tensor:
     return torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2).float() / 255
 
 
+# Helper to summarise the classification based metrics' distribution
+# NOTE: if the statistics are skewed, somehow revealing a potential bad evaluation
+def classification_statistics(logits: torch.Tensor, id2label: dict[int | str, str]) -> dict[str, object]:
+    # count one top-one class per frame/video; ties select the first class ID
+    class_ids = logits.argmax(dim = -1).reshape(-1).cpu()
+    counts = torch.bincount(class_ids, minlength = logits.shape[-1]).tolist()
+    total = len(class_ids)
+    # retain zero-count classes and IDs, including when labels are absent or duplicated
+    classes = [{'class_id': index, 'label': str(id2label.get(index, id2label.get(str(index), f'class_{index}'))),
+                'count': count, 'proportion': count / total}
+               for index, count in enumerate(counts)]
+    classes.sort(key = lambda entry: (-entry['count'], entry['class_id']))
+    return {'total': total, 'observed_classes': sum(count > 0 for count in counts),
+            'dominant_class_proportion': classes[0]['proportion'], 'classes': classes}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description = 'Recalculate reconstruction metrics from saved CineSync videos.')
     parser.add_argument('--run-dir', required = True, help = 'Existing eval_recon run containing videos/ and meta/arguments.json.')
@@ -131,6 +147,20 @@ def main() -> None:
                         for frame in range(p['image_logits'].shape[1])]))
             scores['dtc'] = temporal_consistency(p['dino'])
             scores['ctc'] = temporal_consistency(p['clip'])
+            # audit class concentration for both sides using the already computed logits
+            scores['classification_statistics'] = {}
+            for kind, classifier, model_id in (('image', extractor.image, args.image_metric_model),
+                                                ('video', extractor.video, args.video_metric_model)):
+                distribution = {'model': model_id, 'unit': 'frame' if kind == 'image' else 'video',
+                                'selection': 'top-one logit; ties select the first class ID'}
+                for side, features in (('prediction', p), ('ground_truth', g)):
+                    summary = classification_statistics(features[f'{kind}_logits'], classifier.config.id2label or {})
+                    distribution[side] = summary
+                    dominant = summary['classes'][0]
+                    log(f"{kind.capitalize()} {side}: {summary['observed_classes']} classes across {summary['total']} "
+                        f"{distribution['unit']}s; most frequent '{dominant['label']}' "
+                        f"(ID {dominant['class_id']}): {dominant['count']} ({dominant['proportion']:.1%}).")
+                scores['classification_statistics'][kind] = distribution
         if i3d is not None:
             scores['fvd'] = frechet_distance(torch.cat(pred_i3d).numpy(), torch.cat(gt_i3d).numpy())
         else:
@@ -143,7 +173,8 @@ def main() -> None:
         (run / 'meta' / f'arguments_eval_artifact_{stamp}.json').write_text(
             json.dumps(settings, indent = 2), encoding = 'utf-8')
         destination.write_text(json.dumps(scores, indent = 2), encoding = 'utf-8')
-        log(str(scores), 'OK')
+        # NOTE: newly added classification statistics is not printable
+        log(str({key: value for key, value in scores.items() if key != 'classification_statistics'}), 'OK')
         log(f"Metrics saved to '{destination}'.", 'OK')
     finally:
         dataset.close()
