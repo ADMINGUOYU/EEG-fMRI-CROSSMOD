@@ -72,8 +72,8 @@ def main() -> None:
     if args.i3d_torchscript:
         from ....modules.evaluation.features import I3DFeatures
         i3d = I3DFeatures(args.i3d_torchscript).to(device)
-    dataset, loader, _ = make_loader(args, False)
-    run = create_run(args, 'eval_recon')
+    dataset, loader, _ = make_loader(args, False, modalities = ('fmri', 'video'))
+    run = create_run(args, 'eval_recon', model_name = 'CineSync_fMRI')
     (run / 'videos').mkdir()
     predicted, targets = [], []
     totals = {'psnr': 0.0, 'ssim': 0.0}

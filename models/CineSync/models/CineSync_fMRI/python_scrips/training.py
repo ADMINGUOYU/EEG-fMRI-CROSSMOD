@@ -149,7 +149,7 @@ def main(stage: str) -> None:
             log('Restoring weights and optimiser; the saved epoch restarts with a fresh data order.', 'WARN')
     if rank == 0:
         log(f"Learning-rate schedule: {args.lr_decay_style}, {args.lr_decay_steps} updates, warm-up {args.lr_warmup:.1%}.")
-    run = create_run(args, stage, rank, world)
+    run = create_run(args, stage, rank, world, model_name = 'CineSync_fMRI')
     writer = SummaryWriter(str(run / 'logs')) if rank == 0 else None
     if rank == 0:
         (run / 'meta' / 'model.json').write_text(json.dumps({'stage': stage, 'encoder': asdict(config),

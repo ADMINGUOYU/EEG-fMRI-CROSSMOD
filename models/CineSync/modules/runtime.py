@@ -45,12 +45,15 @@ def setup_device(args: argparse.Namespace) -> tuple[torch.device, int, int]:
     return device, rank, world
 
 
-def create_run(args: argparse.Namespace, stage: str, rank: int = 0, world: int = 1) -> Path:
+def create_run(args: argparse.Namespace, stage: str, rank: int = 0, world: int = 1, *, model_name: str) -> Path:
+    # validate model name
+    if not model_name.strip() or model_name in ('.', '..') or any(char in model_name for char in ('/', '\\', '\0')):
+        raise ValueError('Model name must be a non-empty folder name without path separators.')
     # the launcher path is explicitly supplied; preserve the exact script alongside settings
     folder = None
     if rank == 0:
         name = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '_' + uuid4().hex[:8]
-        folder = Path(args.results_root) / 'CineSync' / 'CineSync_fMRI' / stage / f'run_{name}'
+        folder = Path(args.results_root) / 'CineSync' / model_name / stage / f'run_{name}'
         for subdir in ('logs', 'checkpoints', 'meta'):
             (folder / subdir).mkdir(parents = True, exist_ok = False)
         if args.launch_script:
@@ -116,7 +119,7 @@ def configure_huggingface(args: argparse.Namespace) -> None:
 
 
 def make_loader(args: argparse.Namespace, training: bool, rank: int = 0, world: int = 1,
-                modalities: tuple[str, ...] = ('fmri', 'video')):
+                *, modalities: tuple[str, ...]):
     from torch.utils.data import DataLoader, DistributedSampler
     from .dataset import Dataset_CineSync
     dataset = Dataset_CineSync(args.db_path, args.captions_path, subject_id = args.subject_id,

@@ -48,7 +48,7 @@ def main() -> None:
                 torch.cuda.empty_cache()
         if not dataset.load_cache_embeddings(cache_path):
             raise RuntimeError('Cannot load the generated embedding cache.')
-    run = create_run(args, 'eval_align')
+    run = create_run(args, 'eval_align', model_name = 'CineSync_fMRI')
     features = {key: [] for key in ('brain', 'video', 'text', 'clip_id')}
     count = 0
     # time selected-trial processing separately from cache preparation and final metrics
