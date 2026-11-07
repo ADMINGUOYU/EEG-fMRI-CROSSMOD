@@ -1,0 +1,12 @@
+# Additional requirements for the unchanged project environment.yml.
+diffusers==0.35.2
+accelerate>=1.0,<2
+omegaconf==2.3.0
+kornia>=0.7,<0.9
+clip-anytorch==2.6.0
+open-clip-torch==2.32.0
+dalle2-pytorch==1.15.6
+pytorch-lightning>=2.5,<3
+webdataset>=0.2,<2
+imageio-ffmpeg>=0.4.9
+einops>=0.8
