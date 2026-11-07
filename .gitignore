@@ -1,5 +1,5 @@
 # Data directories and files
-data/
+/data/
 # - symbolic link version
 /data
 *.df
