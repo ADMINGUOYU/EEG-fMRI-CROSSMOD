@@ -223,8 +223,8 @@ def prepare_dataset(args):
     voxel_test = torch.mean(voxel_test, dim=1)
     print("Loaded all fmri test frames to cpu!", voxel_test.shape)
     test_images = torch.load(f'{args.root_dir}/GT_test_3fps.pt', map_location='cpu', weights_only = False)
-    test_text = torch.load(f'{args.root_dir}/GT_test_caption_qwen.pt', map_location='cpu', weights_only = False)
-    test_text_emb = torch.load(f'{args.root_dir}/GT_test_caption_qwen_emb.pt', map_location='cpu', weights_only = False)
+    test_text = torch.load(f'{args.root_dir}/qwen_annotation/GT_test_caption_qwen.pt', map_location='cpu', weights_only = False)
+    test_text_emb = torch.load(f'{args.root_dir}/qwen_annotation/GT_test_caption_qwen_emb.pt', map_location='cpu', weights_only = False)
 
     print("Loaded all crucial test frames to cpu!", test_images.shape)
 
@@ -234,7 +234,7 @@ def prepare_dataset(args):
     print("Loaded all key_objects_masks to cpu!", key_objects_masks.shape)
 
 
-    test_cls_id_json = json.load(open(f'{args.root_dir}/qwen_test_caption_tag_category_id.json'))
+    test_cls_id_json = json.load(open(f'{args.root_dir}/qwen_annotation/qwen_test_caption_tag_category_id.json'))
     print("Loaded all test class_labels_json to cpu!", len(test_cls_id_json))
 
     test_dataset = CC2017_Dataset(voxel_test, test_images, test_text, test_text_emb, mask=key_objects_masks, cls_id=test_cls_id_json, key_obj_cls=key_objects_categories, is_train=False)
