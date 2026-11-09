@@ -153,8 +153,8 @@ if __name__ == '__main__':
         "--root_dir", type=str, default='./data/cc2017',
     )
     parser.add_argument(
-        "--exp", type=str, default='', required=True
-    )
+        "--exp", type = str, default = ''
+    )  # NOTE: no more required (--exp_dir is preferred, this arg is legacy code remanent)
     parser.add_argument(
         "--mode", type=str, default=''
     )
@@ -164,6 +164,11 @@ if __name__ == '__main__':
     )
     add_runtime_arguments(parser)
     args = parser.parse_args()
+
+    # Sanity check
+    # NOTE: `--exp_dir` comesn from `add_runtime_arguments(parser)`
+    if not args.exp_dir and not args.exp:
+        parser.error('provide --exp_dir or --exp')
 
 
 
