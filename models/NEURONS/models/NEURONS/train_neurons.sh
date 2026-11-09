@@ -77,9 +77,9 @@ mkdir -p "$EXP_DIR"
 LAUNCH=("$PYTHON" -m accelerate.commands.launch --num_machines 1 --machine_rank 0
         --num_processes "$NUM_GPUS" --mixed_precision fp16 --main_process_port "$MASTER_PORT")
 if (( NUM_GPUS > 1 )); then LAUNCH+=(--multi_gpu); fi
-COMMON=(--subj "$SUBJECT" --exp_dir "$EXP_DIR")
+COMMON=(--subj "$SUBJECT" --exp_dir "$EXP_DIR" --cache_dir "$HF_HUB_CACHE")
 MODEL=(--model_name "$MODEL_NAME" --root_dir "$DATA_ROOT" --weights_dir "$WEIGHTS_ROOT"
-       --cache_dir "$HF_HUB_CACHE" --pretrained-model-path "$SD_MODEL" --seed "$SEED"
+       --pretrained-model-path "$SD_MODEL" --seed "$SEED"
        --n_blocks "$N_BLOCKS" --n_frames "$N_FRAMES" --hidden_dim "$HIDDEN_DIM")
 TRAIN=("${COMMON[@]}" "${MODEL[@]}" --prior_scale "$PRIOR_SCALE" --lr_scheduler_type "$LR_SCHEDULER")
 if [[ "$SAVE_CHECKPOINTS" == true ]]; then TRAIN+=(--ckpt_saving); else TRAIN+=(--no-ckpt_saving); fi
