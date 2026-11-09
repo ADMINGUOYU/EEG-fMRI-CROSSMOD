@@ -13,7 +13,7 @@ SUBJECT=1
 DATA_ROOT="./data/cc2017"
 WEIGHTS_ROOT="./data/cc2017/pretrained_weights"
 RESULTS_ROOT="./results/NEURONS/NEURONS"
-CACHE_ROOT="./data/cache"
+CACHE_ROOT="./data/cache"   # To configure custom paths, look down and configure the exports
 SD_MODEL="stable-diffusion-v1-5/stable-diffusion-v1-5"
 
 MODEL_NAME="testing"
@@ -58,10 +58,13 @@ if [[ ! -f "models/NEURONS/models/NEURONS/train_neurons.py" ]]; then
 fi
 export CUDA_VISIBLE_DEVICES="$GPU_DEVICES"
 export MASTER_PORT
+
+# Delete any existing things and configure custom cache paths
 export HF_HOME="$PWD/$CACHE_ROOT/huggingface"
 export HF_HUB_CACHE="$HF_HOME/hub"
 export TORCH_HOME="$PWD/$CACHE_ROOT/torch"
 export XDG_CACHE_HOME="$PWD/$CACHE_ROOT"
+
 export PYTHONUNBUFFERED=1
 IFS=',' read -r -a GPU_IDS <<< "$GPU_DEVICES"
 NUM_GPUS="${#GPU_IDS[@]}"
