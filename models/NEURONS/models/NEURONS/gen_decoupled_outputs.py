@@ -228,9 +228,9 @@ def prepare_dataset(args):
 
     print("Loaded all crucial test frames to cpu!", test_images.shape)
 
-    key_objects_categories = json.load(open(f'{args.root_dir}/masks/key_objects_info_qwen_test.json'))
+    key_objects_categories = json.load(open(f'{args.root_dir}/masks/key_objects_info_test.json'))
     print("Loaded all key_objects_categories to cpu!", len(key_objects_categories))
-    key_objects_masks = torch.load(f'{args.root_dir}/masks/key_objects_masks_qwen_test.pt', map_location='cpu', weights_only = False)
+    key_objects_masks = torch.load(f'{args.root_dir}/masks/key_objects_masks_test.pt', map_location='cpu', weights_only = False)
     print("Loaded all key_objects_masks to cpu!", key_objects_masks.shape)
 
 
