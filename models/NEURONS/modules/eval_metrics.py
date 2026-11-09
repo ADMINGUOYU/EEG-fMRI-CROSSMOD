@@ -294,6 +294,7 @@ from transformers import AutoProcessor, CLIPModel, AutoModel
 def clip_score_frame(pred_videos, device: Optional[str] = 'cuda'):
     preatrained_model_path = "openai/clip-vit-large-patch14"
     model = CLIPModel.from_pretrained(preatrained_model_path).to(device)
+    # model.eval() NOTE: might want to add
     processor = AutoProcessor.from_pretrained(preatrained_model_path)
 
     scores = []
@@ -302,7 +303,11 @@ def clip_score_frame(pred_videos, device: Optional[str] = 'cuda'):
 
         inputs = processor(images=pred_video, return_tensors="pt").to(device)
         with torch.no_grad():
-            image_features = model.get_image_features(**inputs).detach().cpu().numpy()
+            image_features = model.get_image_features(**inputs)
+            # Transformers versions return either a tensor or projected pooled features.
+            if not isinstance(image_features, torch.Tensor):
+                image_features = image_features.pooler_output
+            image_features = image_features.detach().cpu().numpy()
 
         cosine_sim_matrix = cosine_similarity(image_features)
         np.fill_diagonal(cosine_sim_matrix, 0)  # set diagonal elements to 0

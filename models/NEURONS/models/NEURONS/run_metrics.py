@@ -52,7 +52,7 @@ def main(
     top_k = 1
     # video classification scores
 
-    clip_pcc_mean, clip_pcc_std = clip_score_frame(pred_list)
+    clip_pcc_mean, clip_pcc_std = clip_score_frame(pred_list, device = device)
 
     acc_list_2way_v, std_list_2way_v = video_classify_metric(
                                         pred_list,
