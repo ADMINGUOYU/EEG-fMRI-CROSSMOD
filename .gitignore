@@ -1,6 +1,4 @@
 # Data directories and files
-/data/
-# - symbolic link version
 /data
 *.df
 *.pkl
@@ -10,9 +8,9 @@
 *.mat
 
 # Training outputs
-results/
-# - symbolic link version
-/results
+/results/*
+# We got a tensor-board utility script
+!/results/tensorboard_extractor.py
 
 # Model files
 *.pth
