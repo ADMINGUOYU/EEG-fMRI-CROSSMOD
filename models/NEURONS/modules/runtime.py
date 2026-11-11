@@ -10,12 +10,13 @@ import os
 from typing import Any
 
 
-def log(*values: Any, sep: str = ' ', end: str = '\n', **kwargs: Any) -> None:
-    # Match the project's coloured, immediately flushed console output.
+def log(*values: Any, level: str = 'INFO', sep: str = ' ', end: str = '\n', **kwargs: Any) -> None:
+    # skip if not main process
     if int(os.environ.get('RANK', '0')) != 0:
         return
     kwargs.pop('flush', None)
-    builtins.print('\033[1;34m[NEURONS] INFO\033[0m:', *values,
+    colour = {'INFO': 34, 'WARN': 33, 'OK': 32, 'ERROR': 31}[level]
+    builtins.print(f'\033[1;{colour}m[NEURONS] {level}\033[0m:', *values,
                    sep = sep, end = end, flush = True, **kwargs)
 
 
