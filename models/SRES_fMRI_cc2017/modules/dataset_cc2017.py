@@ -126,8 +126,8 @@ class DatasetCC2017(Dataset):
                          'mean_absolute_voxel_mean': values.mean(0).abs().mean().item(),
                          'mean_voxel_std': values.std(0).mean().item()})
         # Average the run means and run standard deviations; this is not the pooled standard deviation
-        overall_mean = torch.stack([r['mean'] for r in rows]).mean().item()
-        overall_std = torch.stack([r['std'] for r in rows]).mean().item()
+        overall_mean = sum(r['mean'] for r in rows) / len(rows)
+        overall_std = sum(r['std'] for r in rows) / len(rows)
         # return dict
         return {'shape': list(self.data.shape),
                 'runs': rows,  # list of dicts with run-level statistics

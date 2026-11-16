@@ -36,6 +36,9 @@ def setup(config: Config) -> torch.device:
     if device.type == 'cuda':
         if not torch.cuda.is_available():
             raise RuntimeError('CUDA is unavailable; configure DEVICE_TYPE in the launcher.')
+        # CUDA_VISIBLE_DEVICES maps the selected physical GPU to logical index 0
+        if device.index is None:
+            device = torch.device('cuda', 0)
         torch.cuda.set_device(device)
         torch.cuda.manual_seed_all(config.seed)
     return device

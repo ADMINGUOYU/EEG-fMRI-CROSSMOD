@@ -98,7 +98,7 @@ class ObservationModel(nn.Module):
         # Set the response at time zero to exactly zero before normalising the discrete weights
         kernel = gamma_density(HRF_PEAK_SHAPE) - gamma_density(HRF_UNDERSHOOT_SHAPE) / HRF_UNDERSHOOT_RATIO
         kernel = torch.where(time > 0, kernel, torch.zeros_like(kernel))
-        """
+        r"""
         1D over each voxel's time sequence
         HRF weight
             ^
