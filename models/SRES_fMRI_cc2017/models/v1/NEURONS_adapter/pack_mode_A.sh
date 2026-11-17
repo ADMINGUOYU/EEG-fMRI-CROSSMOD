@@ -21,6 +21,7 @@ BATCH_SIZE=2                               # Temporal windows per batch
 WORKERS=0                                  # DataLoader processes; 0 uses the main process
 MC_TEST_SAMPLES=8                          # Noisy predictions averaged per window
 SEED=42                                    # Random seed for inference noise
+LOG_EVERY=20                               # Console progress interval in batches
 # =======================================================================
 
 # Keep relative paths rooted at the project and expose the selected GPU as cuda:0
@@ -40,5 +41,5 @@ export CUDA_VISIBLE_DEVICES="$GPU_DEVICES"
 export PYTHONUNBUFFERED=1
 ARGS=(--checkpoint "$CHECKPOINT" --data-root "$DATA_ROOT" --output-dir "$OUTPUT_DIR"
       --device "$DEVICE_TYPE" --batch-size "$BATCH_SIZE" --workers "$WORKERS"
-      --mc-test-samples "$MC_TEST_SAMPLES" --seed "$SEED")
+      --mc-test-samples "$MC_TEST_SAMPLES" --seed "$SEED" --log-every "$LOG_EVERY")
 exec "$PYTHON" -m models.SRES_fMRI_cc2017.models.v1.NEURONS_adapter.pack_mode_A "${ARGS[@]}"

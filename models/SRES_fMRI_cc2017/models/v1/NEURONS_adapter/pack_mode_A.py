@@ -9,13 +9,14 @@ from contextlib import redirect_stdout
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from time import monotonic
 
 import torch
 
 from ....modules.config import Config
 from ....modules.dataset_cc2017 import DatasetCC2017
 from ....modules.noise import ar1_noise
-from ....modules.runtime import atomic_save, make_loader, setup
+from ....modules.runtime import atomic_save, log, make_loader, progress, setup
 from ..network import SuperResolutionHead
 
 
@@ -30,7 +31,7 @@ def main(args: argparse.Namespace) -> None:
                      checkpoint = str(checkpoint), data_root = args.data_root,
                      device = args.device, batch_size = args.batch_size,
                      workers = args.workers, mc_test_samples = args.mc_test_samples,
-                     seed = args.seed)
+                     seed = args.seed, log_every = args.log_every)
     device = setup(config)
     phases = ('train', 'test')
     output_dir = Path(args.output_dir).resolve()
@@ -88,8 +89,10 @@ def main(args: argparse.Namespace) -> None:
         counts = torch.zeros(len(data.data), data.repetitions, dtype = torch.int32)
         local = torch.arange(current.burnin_trs, current.window_trs - current.lookahead_trs)
         loader = make_loader(data, current, False)
+        log(f'Packing {phase}: {len(data)} windows, {data.repetitions} repetitions')
+        started = monotonic()
         with torch.inference_mode():
-            for batch in loader:
+            for iteration, batch in enumerate(loader, start = 1):
                 values = batch['bold'].to(device)
                 prediction = torch.zeros_like(values)
                 # Match standard mode-A inference: fresh recorruption followed by Monte-Carlo averaging
@@ -106,6 +109,9 @@ def main(args: argparse.Namespace) -> None:
                     rows = data.offsets[run] + int(batch['start'][sample]) + local
                     total[rows, repetition] += prediction[sample, local]
                     counts[rows, repetition] += 1
+                # Report console progress and remaining time separately for each split
+                if iteration % current.log_every == 0 or iteration == len(loader):
+                    progress(f'Packing {phase}', iteration, len(loader), started)
 
         # Preserve boundary rows with original signals so NEURONS receives no NaNs or shifted pairings
         valid = counts > 0
@@ -115,10 +121,12 @@ def main(args: argparse.Namespace) -> None:
             raise FloatingPointError('Non-finite packed BOLD')
         path = output_dir / f'subj{current.subject:02d}_{phase}_fmri.pt'
         atomic_save(total, path)
+        log(f'Saved {path}; retained original BOLD for {int((~valid).sum())}/{valid.numel()} boundary trial-repetitions', 'OK')
 
     # Publish supporting assets only after all requested fMRI tensors have been generated
     for destination, target in links:
         destination.symlink_to(target, target_is_directory = target.is_dir())
+    log(f'Packing complete: {output_dir}; created {len(links)} supporting symlinks', 'OK')
 
 
 if __name__ == '__main__':
@@ -132,4 +140,5 @@ if __name__ == '__main__':
     parser.add_argument('--workers', type = int, default = 0)
     parser.add_argument('--mc-test-samples', type = int, default = 8)
     parser.add_argument('--seed', type = int, default = 42)
+    parser.add_argument('--log-every', type = int, default = 20)
     main(parser.parse_args())
