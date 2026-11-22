@@ -3,6 +3,9 @@
 # (same temporal resolution as before)
 # NOTE: no temporal resolution produced by `pack_mode_B_single_frame`
 #       thus the artifact could be directly used by NEURONS
+# NOTE: Every position without a valid mode-B prediction is filled with the original BOLD at that same output row
+# NOTE: We applied temporal mapping of original BOLD signal's 4 s shift
+# NOTE: under current packing settings (burnin_trs = 15; lookahead_trs = 4), equivalent to EXCLUDE_START_TRS=17; EXCLUDE_END_TRS=2
 
 from __future__ import annotations
 
