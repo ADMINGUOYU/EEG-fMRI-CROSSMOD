@@ -13,14 +13,21 @@ RHO_LIMIT = 0.94                  # Keep stationary estimates away from singular
 
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
 
-from .config import Config
 from .dataset_cc2017 import DatasetCC2017
 from .runtime import atomic_save, log, progress
+
+# import as type checking
+# NOTE: version specific Config refactored to version specific directory
+if TYPE_CHECKING:
+    from ..models.v1.config import Config as ConfigV1
+    from ..models.v2.config import Config as ConfigV2
+
+    Config = ConfigV1 | ConfigV2
 
 
 def calibrate(dataset: DatasetCC2017, config: Config) -> dict[str, Any]:

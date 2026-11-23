@@ -10,7 +10,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from ...modules.config import Config
+from .config import Config
 from ...modules.physics import ObservationModel
 
 

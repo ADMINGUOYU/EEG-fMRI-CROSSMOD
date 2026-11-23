@@ -7,13 +7,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch.utils.data import Dataset
 
-from .config import Config
 from .runtime import log
+
+# import as type checking
+# NOTE: version specific Config refactored to version specific directory
+if TYPE_CHECKING:
+    from ..models.v1.config import Config as ConfigV1
+    from ..models.v2.config import Config as ConfigV2
+
+    Config = ConfigV1 | ConfigV2
 
 
 class DatasetCC2017(Dataset):

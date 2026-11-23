@@ -30,7 +30,7 @@ LOG_EVERY=20                               # Console progress interval in batche
 # =======================================================================
 
 # Keep relative paths rooted at the project and expose the selected GPU as cuda:0
-if [[ ! -f "models/SRES_fMRI_cc2017/modules/config.py" ]]; then
+if [[ ! -f "models/SRES_fMRI_cc2017/models/v1/config.py" ]]; then
     printf '\033[1;31m[SRES_fMRI_cc2017] ERROR\033[0m: Run from the project root\n' >&2
     exit 1
 fi

@@ -1,5 +1,5 @@
 # file: config.py
-# Typed configuration shared by calibration, training and inference
+# Typed configuration for v2 deconvolution training and inference
 
 from __future__ import annotations
 
@@ -17,10 +17,11 @@ class Config:
     derived timing is evaluated on demand
     """
 
-    # Run action: calibrate, train or infer
+    # Model version recorded in checkpoints and used for result directories
+    # NOTE: This is version 2 (without de-noise-r) variant
+    version: str = 'v2'
+    # Run action: train or infer
     action: str = 'train'
-    # Training stage: 1 for denoising, 2 for denoising and HRF deconvolution
-    stage: int = 1
     # Directory containing the subject train/test fMRI tensors
     data_root: str = './data/cc2017'
     # Subject ID: 1, 2 or 3
@@ -29,7 +30,7 @@ class Config:
     train_run_lengths: str = ','.join(['240'] * 18)
     # Comma-separated volume counts for each test movie run
     test_run_lengths: str = ','.join(['240'] * 5)
-    # One-based training run IDs held out from fitting and noise calibration
+    # One-based training run IDs held out from fitting
     validation_runs: str = '17,18'
     # BOLD delay already included in the saved stimulus pairing, in seconds
     stored_delay_sec: float = 4.0
@@ -39,37 +40,27 @@ class Config:
     window_trs: int = 32
     # Step between neighbouring window starts, in volumes
     window_stride: int = 4
-    # Leading volumes excluded from losses and export to allow HRF history (so the model don't assume past are all 0)
+    # Leading volumes excluded from losses and export to allow a full HRF history
     burnin_trs: int = 15
     # Trailing volumes excluded from losses and export, not a causal receptive-field limit
     lookahead_trs: int = 4
-    # Stage-2 activity samples per TR; 1 retains the original temporal grid
+    # Activity samples per TR; 1 retains the original temporal grid
     tsr_factor: int = 4
-    # Generated voxel-noise cache; select a matching path when changing subject
-    calibration_path: str = './data/cc2017/sres_calibration_subj{}.pt'.format(subject)
-    # Noise correlation between adjacent volumes; numeric string or auto from training repeats
-    rho_ar1: str = '0.20'
-    # Input noise multiplier; reciprocal training targets use its negative inverse
-    r2r_alpha: float = 0.5
-    # Inference only: number of noisy predictions averaged per window (Monte Carlo)
-    mc_test_samples: int = 8
-    # Stage 2: causal HRF kernel duration in seconds
+    # Causal HRF kernel duration in seconds
     hrf_length_sec: float = 30.0
-    # Stage 2: canonical for fixed timing or dilated_learnable for bounded time stretching
+    # Canonical for fixed timing or dilated_learnable for bounded time stretching
     hrf_mode: str = 'canonical'
-    # Stage 2: lower bound on learned HRF dilation, below 1
+    # Lower bound on learned HRF dilation, below 1
     hrf_dilation_min: float = 0.8
-    # Stage 2: upper bound on learned HRF dilation, above 1
+    # Upper bound on learned HRF dilation, above 1
     hrf_dilation_max: float = 1.2
-    # Stage 2: denoising loss weight; reblurring uses 1 minus this value
-    mu_loss_weight: float = 0.5
-    # Stage 2: weight of the temporal total-variation penalty on activity
+    # Weight of the temporal total-variation penalty on activity
     lambda_tv: float = 0.01
-    # Stage 2: allow negative activity; false constrains activity to be non-negative
+    # Allow negative activity; false constrains activity to be non-negative
     signed_activations: bool = True
-    # Stage 2: learn a constant additive BOLD offset per voxel, initialised to zero
+    # Learn a constant additive BOLD offset per voxel, initialised to zero
     learn_baseline: bool = True
-    # Stage 2: apply the supplied spatial blur matrix during reblurring
+    # Apply the supplied spatial blur matrix during reblurring
     enable_spatial_spsf: bool = False
     # Torch spatial operator with matrix, fwhm_mm and voxel_order_confirmed metadata
     spatial_matrix_path: str = ''
@@ -81,13 +72,9 @@ class Config:
     depth: int = 2
     # Temporal convolution width in samples; odd and at least 3
     kernel_size: int = 3
-    # Optional voxel-mixing bottleneck size; 0 disables mixing
-    mixing_rank: int = 0
     # Voxels per temporal processing chunk to limit activation memory
     voxel_batch_size: int = 256
-    # Stage-2 training: freeze the denoiser and optional voxel mixing
-    freeze_denoiser: bool = False
-    # Fresh stage-2 training: initialise the deconvolver on synthetic activity
+    # Fresh training: initialise the deconvolver on synthetic activity
     pretrain_synthetic: bool = True
     # Number of optimiser steps during synthetic pre-training
     synthetic_steps: int = 500
@@ -97,16 +84,12 @@ class Config:
     synthetic_max_shot_sec: float = 8.0
     # Standard deviation of Gaussian block amplitudes before any absolute-value constraint
     synthetic_amplitude: float = 1.0
-    # Fresh stage-2 training: stage-1 weights to initialise the denoiser and mixing
-    stage1_checkpoint: str = ''
-    # Inference only: trained checkpoint supplying model weights and noise calibration
+    # Inference only: trained checkpoint supplying model weights
     checkpoint: str = ''
-    # Either training stage: restore checkpoint weights, optimiser, scheduler and RNG states
+    # Training: restore checkpoint weights, optimiser, scheduler and RNG states
     resume: str = ''
     # Inference only: source split, train or test
     phase: str = 'test'
-    # Inference only: A exports denoised BOLD; B exports stage-2 activity on the finer grid
-    mode: str = 'A'
     # Inference only: average repeated presentations before processing
     average_repeats: bool = True
     # Base directory for run outputs, logs and checkpoints
@@ -140,7 +123,7 @@ class Config:
 
     @property
     def dt_sec(self) -> float:
-        # Seconds between inferred activity samples on the stage-2 temporal grid
+        # Seconds between inferred activity samples
         return self.tr_sec / self.tsr_factor
 
     @property
@@ -155,14 +138,16 @@ class Config:
 
     def validate(self) -> None:
         # Validate numerical settings and window coverage; chronology is assumed by the loader
-        if self.action not in ('calibrate', 'train', 'infer') or self.stage not in (1, 2):
-            raise ValueError('Choose calibrate/train/infer and stage 1/2.')
-        if self.subject not in (1, 2, 3) or self.phase not in ('train', 'test') or self.mode not in ('A', 'B'):
-            raise ValueError('Invalid subject, phase or inference mode.')
+        if self.version != 'v2':
+            raise ValueError('This configuration belongs to v2.')
+        if self.action not in ('train', 'infer'):
+            raise ValueError('Choose train or infer.')
+        if self.subject not in (1, 2, 3) or self.phase not in ('train', 'test'):
+            raise ValueError('Invalid subject or inference phase.')
         positive = ('tr_sec', 'window_trs', 'window_stride', 'tsr_factor', 'hrf_length_sec',
-                    'r2r_alpha', 'mc_test_samples', 'width', 'depth', 'voxel_batch_size',
+                    'width', 'depth', 'voxel_batch_size',
                     'batch_size', 'epochs', 'lr', 'log_every', 'save_every', 'synthetic_amplitude')
-        if any(getattr(self, name) <= 0 for name in positive):
+        if any(not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0 for name in positive):
             raise ValueError(f'These settings must be positive: {positive}')
         if self.burnin_trs < 0 or self.lookahead_trs < 0 or self.burnin_trs + self.lookahead_trs >= self.window_trs:
             raise ValueError('Window must contain a non-empty valid interior.')
@@ -172,22 +157,21 @@ class Config:
             raise ValueError('Window must suit the U-Net depth; kernel size must be odd and at least three.')
         if self.hrf_samples < 2 or (self.window_trs - self.burnin_trs - self.lookahead_trs) * self.tsr_factor < 2:
             raise ValueError('HRF and valid high-resolution interior must each contain at least two samples.')
-        if (self.stage == 2 or self.mode == 'B') and self.burnin_trs * self.tsr_factor < self.hrf_samples - 1:
-            raise ValueError('Stage 2 burn-in must cover the full causal HRF history; increase burnin_trs/window_trs.')
+        if self.burnin_trs * self.tsr_factor < self.hrf_samples - 1:
+            raise ValueError('Deconvolution burn-in must cover the full causal HRF history; increase burnin_trs/window_trs.')
         if self.hrf_mode not in ('canonical', 'dilated_learnable'):
             raise ValueError('Unknown HRF mode.')
         if not 0 < self.hrf_dilation_min < 1 < self.hrf_dilation_max:
             raise ValueError('HRF dilation bounds must bracket one.')
-        if not 0 <= self.mu_loss_weight <= 1 or not 0 <= self.warmup_fraction < 1 or not 0 <= self.minimum_lr_ratio <= 1:
-            raise ValueError('Invalid loss or scheduling fraction.')
-        if min(self.lambda_tv, self.weight_decay, self.mixing_rank, self.synthetic_steps, self.workers, self.max_grad_norm) < 0:
-            raise ValueError('Regularisation, mixing rank, worker count and synthetic steps cannot be negative.')
+        if not 0 <= self.warmup_fraction < 1 or not 0 <= self.minimum_lr_ratio <= 1:
+            raise ValueError('Invalid scheduling fraction.')
+        nonnegative = ('lambda_tv', 'weight_decay', 'synthetic_steps', 'workers', 'max_grad_norm')
+        if any(not math.isfinite(getattr(self, name)) or getattr(self, name) < 0 for name in nonnegative):
+            raise ValueError('Regularisation, worker count and synthetic steps cannot be negative.')
         if not 0 < self.synthetic_min_shot_sec <= self.synthetic_max_shot_sec:
             raise ValueError('Invalid synthetic shot durations.')
-        if self.stored_delay_sec < 0 or not math.isclose(self.delay_trs * self.tr_sec, self.stored_delay_sec):
+        if not math.isfinite(self.stored_delay_sec) or self.stored_delay_sec < 0 or not math.isclose(self.delay_trs * self.tr_sec, self.stored_delay_sec):
             raise ValueError('Stored lag must be a non-negative whole number of TRs.')
-        if self.rho_ar1 != 'auto' and not -0.95 < float(self.rho_ar1) < 0.95:
-            raise ValueError('rho_ar1 must be auto or lie strictly between -0.95 and 0.95.')
         if self.enable_spatial_spsf and (not self.spatial_matrix_path or self.spsf_fwhm_mm <= 0):
             raise ValueError('Spatial sPSF requires a precomputed matrix with verified voxel order and FWHM.')
 
@@ -195,12 +179,11 @@ class Config:
         return asdict(self)
 
 
-# Off class utility
 def parse_config() -> Config:
     """
-    Parser function from command line arguments
+    Parse all v2 settings from the launcher
     """
-    parser = argparse.ArgumentParser(description = 'Temporal denoising and HRF deconvolution for cc2017.')
+    parser = argparse.ArgumentParser(description = 'HRF-constrained deconvolution for cc2017 (v2).')
     defaults = Config()
     for field in fields(defaults):
         value = getattr(defaults, field.name)

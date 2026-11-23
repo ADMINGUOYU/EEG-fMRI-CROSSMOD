@@ -11,7 +11,7 @@ import torch
 from torch.nn import functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from ...modules.config import Config, parse_config
+from .config import Config, parse_config
 from ...modules.dataset_cc2017 import DatasetCC2017
 from ...modules.noise import ar1_noise, calibrate, load_calibration, reciprocal_pair
 from ...modules.physics import synthetic_shots
@@ -127,7 +127,8 @@ def main(config: Config) -> None:
         saved = torch.load(config.resume, map_location = 'cpu', weights_only = False)
         # Resuming is exact: structural and training settings cannot change under an old scheduler.
         mutable = {'resume', 'launch_script', 'results_root', 'device', 'workers', 'log_every', 'save_every', 'checkpoint'}
-        changed = [key for key, value in config.to_dict().items() if key not in mutable and saved['config'][key] != value]
+        saved_config = Config(**saved['config']).to_dict()
+        changed = [key for key, value in config.to_dict().items() if key not in mutable and saved_config[key] != value]
         if changed or saved['calibration']['provenance'] != calibration['provenance']:
             raise ValueError(f'Resume settings/source differ: {changed}')
         model.load_state_dict(saved['model'], strict = True)

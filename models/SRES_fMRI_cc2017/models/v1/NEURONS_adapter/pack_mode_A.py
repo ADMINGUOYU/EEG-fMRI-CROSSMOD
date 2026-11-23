@@ -13,7 +13,7 @@ from time import monotonic
 
 import torch
 
-from ....modules.config import Config
+from ..config import Config
 from ....modules.dataset_cc2017 import DatasetCC2017
 from ....modules.noise import ar1_noise
 from ....modules.runtime import atomic_save, log, make_loader, progress, setup

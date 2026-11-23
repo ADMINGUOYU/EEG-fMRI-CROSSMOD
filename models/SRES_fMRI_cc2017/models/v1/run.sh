@@ -86,7 +86,7 @@ SAVE_EVERY=5                               # Epoch interval for numbered checkpo
 
 # Preserve the project-root working directory used by all package paths.
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
-if [[ ! -f "models/SRES_fMRI_cc2017/modules/config.py" ]]; then
+if [[ ! -f "models/SRES_fMRI_cc2017/models/v1/config.py" ]]; then
     printf '\033[1;31m[SRES_fMRI_cc2017] ERROR\033[0m: Run from the project root.\n' >&2
     exit 1
 fi

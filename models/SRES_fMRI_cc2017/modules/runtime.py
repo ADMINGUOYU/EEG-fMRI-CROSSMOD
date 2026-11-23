@@ -10,14 +10,20 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from .config import Config
+# import as type checking
+# NOTE: version specific Config refactored to version specific directory
+if TYPE_CHECKING:
+    from ..models.v1.config import Config as ConfigV1
+    from ..models.v2.config import Config as ConfigV2
+
+    Config = ConfigV1 | ConfigV2
 
 
 def log(message: str, level: str = 'INFO') -> None:
@@ -52,7 +58,8 @@ def save_json(path: Path, value: Any) -> None:
 def create_run(config: Config) -> Path:
     # Preserve the literal launcher and resolved settings alongside each new run.
     name = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '_' + uuid4().hex[:8]
-    folder = Path(config.results_root) / 'SRES_fMRI_cc2017' / 'v1' / f'{config.action}_stage{config.stage}' / f'run_{name}'
+    action = f'{config.action}_stage{config.stage}' if config.version == 'v1' else config.action
+    folder = Path(config.results_root) / 'SRES_fMRI_cc2017' / config.version / action / f'run_{name}'
     for part in ('meta', 'checkpoints', 'logs', 'artifacts'):
         (folder / part).mkdir(parents = True, exist_ok = False)
     save_json(folder / 'meta' / 'arguments.json', config.to_dict())

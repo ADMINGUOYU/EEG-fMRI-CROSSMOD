@@ -30,12 +30,19 @@ HRF_UNDERSHOOT_RATIO = 6.0   # Divides the undershoot by 6; area ratio is 1/6 be
 # =======================================================================
 
 import math
+from typing import TYPE_CHECKING
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .config import Config
+# import as type checking
+# NOTE: version specific Config refactored to version specific directory
+if TYPE_CHECKING:
+    from ..models.v1.config import Config as ConfigV1
+    from ..models.v2.config import Config as ConfigV2
+
+    Config = ConfigV1 | ConfigV2
 
 
 class ObservationModel(nn.Module):

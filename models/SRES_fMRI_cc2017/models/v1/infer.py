@@ -10,7 +10,7 @@ from time import monotonic
 
 import torch
 
-from ...modules.config import Config, parse_config
+from .config import Config, parse_config
 from ...modules.dataset_cc2017 import DatasetCC2017
 from ...modules.noise import ar1_noise
 from ...modules.runtime import atomic_save, create_run, log, make_loader, progress, save_json, setup
