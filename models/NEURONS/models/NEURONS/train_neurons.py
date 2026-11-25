@@ -1,4 +1,4 @@
-from ...modules.runtime import log as print, add_runtime_arguments, experiment_dir
+from ...modules.runtime import log as print, add_runtime_arguments
 import os
 import sys
 
@@ -728,9 +728,6 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--weights_dir", type=str, default='./data/cc2017/pretrained_weights',
-    )
-    parser.add_argument(
-        "--exp_dir", type=str, default = './results/NEURONS/NEURONS/exp_neurons/subj_1',
     )
     parser.add_argument(
         "--ckpt_saving", action=argparse.BooleanOptionalAction, default=True,

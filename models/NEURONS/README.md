@@ -49,7 +49,7 @@ Configure GPU IDs, subject, paths and training settings in Bash. Training and ke
 
 ## Run artefacts
 
-Outputs default to `results/NEURONS/NEURONS/exp_<name>/subj_<id>`, containing checkpoints, stage logs, TensorBoard events and generated artefacts. Python entry points accept `--exp_dir` to override this directory; video generation uses `--exp` for the full directory path.
+Outputs default to `results/NEURONS/NEURONS/exp_<name>/subj_<id>-<model_name>`, containing checkpoints, stage logs, TensorBoard events and generated artefacts.
 
 Stage 2 requires stage 1's `checkpoints/brain_model.pth`; reconstruction requires `checkpoints/brain_model_prior_last.pth`.
 

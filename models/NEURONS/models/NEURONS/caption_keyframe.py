@@ -17,6 +17,9 @@ if __name__ == "__main__":
     )
     add_runtime_arguments(parser)
     args = parser.parse_args()
+    
+    # NOTE: Keep the legacy experiment field aligned with the directory from Bash
+    args.exp = args.exp_dir
 
 
     device = "cuda" if torch.cuda.is_available() else "cpu"

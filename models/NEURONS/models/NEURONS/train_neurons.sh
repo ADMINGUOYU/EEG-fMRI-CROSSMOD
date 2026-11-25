@@ -69,7 +69,7 @@ export PYTHONUNBUFFERED=1
 IFS=',' read -r -a GPU_IDS <<< "$GPU_DEVICES"
 NUM_GPUS="${#GPU_IDS[@]}"
 PACKAGE="models.NEURONS.models.NEURONS"
-EXP_DIR="$RESULTS_ROOT/exp_$EXPERIMENT/subj_$SUBJECT"
+EXP_DIR="$RESULTS_ROOT/exp_$EXPERIMENT/subj_${SUBJECT}-${MODEL_NAME}"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$EXP_DIR"
 
@@ -112,7 +112,7 @@ if [[ "$STAGES" == *4* ]]; then
         2>&1 | tee "$EXP_DIR/caption_log_$TIMESTAMP.txt"
 fi
 if [[ "$STAGES" == *5* ]]; then
-    VIDEO=(--exp "$EXP_DIR" --mode "$MODE" --subj "$SUBJECT" --root_dir "$DATA_ROOT"
+    VIDEO=(--exp_dir "$EXP_DIR" --mode "$MODE" --subj "$SUBJECT" --root_dir "$DATA_ROOT"
            --cache_dir "$HF_HUB_CACHE" --pretrained-model-path "$SD_MODEL"
            --config "$VIDEO_CONFIG" --inference-config "$INFERENCE_CONFIG"
            --L "$VIDEO_LENGTH" --W "$VIDEO_WIDTH" --H "$VIDEO_HEIGHT")

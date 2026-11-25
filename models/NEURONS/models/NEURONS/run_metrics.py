@@ -165,12 +165,9 @@ if __name__ == '__main__':
     add_runtime_arguments(parser)
     args = parser.parse_args()
 
-    # Sanity check
     # NOTE: `--exp_dir` comesn from `add_runtime_arguments(parser)`
-    if not args.exp_dir and not args.exp:
-        parser.error('provide --exp_dir or --exp')
-
-
+    # NOTE: Keep the legacy experiment field aligned with the directory from Bash
+    args.exp = args.exp_dir
 
     if args.mode == "self":
         data_path = f'{experiment_dir(args)}/gen_videos_motion_self'

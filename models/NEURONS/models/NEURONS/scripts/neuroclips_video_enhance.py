@@ -345,7 +345,7 @@ if __name__ == "__main__":
         "--root_dir", type=str, default='./data/cc2017',
     )
     parser.add_argument(
-        "--exp", type=str, default='', required=True
+        "--exp", type=str, default=''
     )
     parser.add_argument(
         "--mode", type=str, default='', required=True
@@ -363,6 +363,9 @@ if __name__ == "__main__":
     parser.add_argument("--without-xformers", action="store_true")
     add_runtime_arguments(parser)
     args = parser.parse_args()
+
+    # NOTE: Keep the legacy experiment field aligned with the directory from Bash
+    args.exp = args.exp_dir
 
 
 

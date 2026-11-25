@@ -25,13 +25,13 @@ def add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
     if '--cache_dir' not in parser._option_string_actions:
         parser.add_argument('--cache_dir', type = str, default = './data/cache/huggingface/hub')
     if '--exp_dir' not in parser._option_string_actions:
-        parser.add_argument('--exp_dir', type = str, default = None,
-                            help = 'Full subject output directory; overrides --exp.')
+        parser.add_argument('--exp_dir', type = str, required = True,
+                            help = 'Full run output directory')
 
 
 def experiment_dir(args: argparse.Namespace) -> str:
-    # The explicit directory lets future variants choose their own results root.
-    return args.exp_dir or f'./results/NEURONS/NEURONS/exp_{args.exp}/subj_{args.subj}'
+    # The Bash launcher supplies the complete run directory.
+    return args.exp_dir
 
 
 class TensorBoardLogger:
